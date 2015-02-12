@@ -922,58 +922,6 @@ class ExtendedBlock:
             n_elements = self.eval(n_elements)
         return self._tail.allocate_stack(dtype, n_elements=n_elements)
 
-    def for_loop_helper(self, dtype, *loops):
-
-        return self._for_loop_helper(dtype, loops, ())
-
-    def _for_loop_helper(self, dtype, loops, outer_loop_vars):
-
-        assert len(loops) > 0
-        if len(loops) == 1:
-            return self._for_loop_helper1(dtype, loops[0], outer_loop_vars)
-        else:
-            this_entry, this_exit, this_loop_var = \
-                self._for_loop_helper1(dtype, loops[0], outer_loop_vars)
-            inner_entry, inner_exit, *inner_loop_vars = \
-                this_entry._for_loop_helper(dtype, loops[1:],
-                    tuple(outer_loop_vars)+(this_loop_var,))
-            this_entry.branch(this_exit)
-            return [inner_entry, inner_exit, this_loop_var]+inner_loop_vars
-
-    def _for_loop_helper1(self, dtype, range_args, outer_loop_vars):
-
-        if callable(range_args):
-            range_args = range_args(*outer_loop_vars)
-        if not isinstance(range_args, (list, tuple)):
-            range_args = [range_args]
-        else:
-            range_args = list(range_args)
-        if len(range_args) == 1:
-            range_args.insert(0, 0)
-        if len(range_args) == 2:
-            range_args.append(1)
-        if len(range_args) == 3:
-            range_args.append(False)
-        start, stop, step, at_least_once = range_args
-
-        eb_loop_start, eb_loop_body, eb_loop_end, eb_loop_exit = \
-            self.append_extended_blocks(4)
-
-        loop_var = eb_loop_start.add_phi_node(dtype)
-        loop_var.set_value(self.eval(dtype(start)), self._tail)
-        self._tail.branch1(eb_loop_start._head)
-
-        eb_loop_start.branch([lt(loop_var, stop), eb_loop_body], eb_loop_exit)
-
-        loop_var.set_value(eb_loop_end.eval(loop_var+step), eb_loop_end)
-        eb_loop_end.branch(eb_loop_start)
-
-        # TODO: use at_least_once
-
-        self._tail = eb_loop_exit._tail
-
-        return eb_loop_body, eb_loop_end, loop_var
-
 
 class Module:
 

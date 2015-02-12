@@ -26,6 +26,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import pylang
 from pylang.core import *
+from pylang import utils
 
 
 def compile_and_run(module):
@@ -108,7 +109,7 @@ def test3():
 
     main, entry = module.define_function('main', int32_t)
 
-    loop_entry, loop_exit, i, j, k = entry.for_loop_helper(
+    loop_entry, loop_exit, i, j, k = utils.for_loop_helper(entry,
         int32_t, 2, lambda i: i+2, lambda i, j: i+j+2)
     loop_entry.call('printf', b'i = %d, j = %d, k = %d\n', i, j, k)
     loop_entry.branch(loop_exit)
@@ -189,12 +190,12 @@ def test4():
     b = DynamicArray.allocate(entry, int32_t, (10, 10))
     c = DynamicArray.allocate(entry, int32_t, (10, 10))
 
-    loop_entry, loop_exit, *I = entry.for_loop_helper(int32_t, *a.shape)
+    loop_entry, loop_exit, *I = utils.for_loop_helper(entry, int32_t, *a.shape)
     loop_entry.assign(a[I], I[0])
     loop_entry.assign(b[I], I[1])
     loop_entry.branch(loop_exit)
 
-    loop_entry, loop_exit, *I = entry.for_loop_helper(int32_t, *a.shape)
+    loop_entry, loop_exit, *I = utils.for_loop_helper(entry, int32_t, *a.shape)
     loop_entry.assign(c[I], a[I]+b[I])
     loop_entry.call('printf', b'c[%d,%d] = %d\n', I[0], I[1], c[I])
     loop_entry.branch(loop_exit)
@@ -282,7 +283,7 @@ def test_float_loop():
 
     main, entry = module.define_function('main', int32_t)
 
-    loop_entry, loop_exit, i = entry.for_loop_helper(
+    loop_entry, loop_exit, i = utils.for_loop_helper(entry,
         float64_t, [0, 10, 0.25])
     loop_entry.call('printf', b'%f\n', i)
     loop_entry.branch(loop_exit)
