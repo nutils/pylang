@@ -145,8 +145,8 @@ class FirstClassType(TypeBase):
         assert isinstance(value.dtype, FirstClassType)
         return RHSExpression(
             self,
-            lambda _value: 'bitcast {} {} to {}'.format(
-                value.dtype._llvm_id, _value, self._llvm_id),
+            lambda _value: 'bitcast {} to {}'.format(
+                _value._llvm_ty_val, self._llvm_id),
             (value,))
 
 
@@ -447,7 +447,7 @@ class RHSExpression(Expression):
         evaluated_args = []
         for arg in self._args:
             bb, arg = arg._eval(bb)
-            evaluated_args.append(arg._llvm_id)
+            evaluated_args.append(arg)
         result = bb._reserve_variable(self.dtype)
         bb._append_statement('  {} = {}'.format(
             result._llvm_id, self._rhs_generator(*evaluated_args)))
@@ -1118,8 +1118,8 @@ def _gen_bin_op(dtype_class, py_dtype, llvm_op, return_dtype=None):
             return NotImplemented
         return RHSExpression(
             l.dtype if return_dtype is None else return_dtype,
-            lambda _l, _r: '{} {} {}, {}'.format(
-                llvm_op, l.dtype._llvm_id, _l, _r),
+            lambda _l, _r: '{} {}, {}'.format(
+                llvm_op, _l._llvm_ty_val, _r._llvm_id),
             (l, r))
     return custom
 
@@ -1158,23 +1158,22 @@ def _typecast(new_dtype, value):
         return value
     elif isinstance(old_dtype, SignedIntegerType):
         if new_dtype.bits > old_dtype.bits:
-            return RHSExpression(new_dtype, lambda _value:
-                'sext {} {} to {}'.format(old_dtype._llvm_id,
-                    _value, new_dtype._llvm_id), (value,))
+            op = 'sext'
         elif new_dtype.bits < old_dtype.bits:
-            return RHSExpression(new_dtype, lambda _value:
-                'trunc {} {} to {}'.format(old_dtype._llvm_id,
-                    _value, new_dtype._llvm_id), (value,))
+            op = 'trunc'
         else:
             raise ValueError
     elif isinstance(old_dtype, UnsignedIntegerType):
         return NotImplemented
     elif isinstance(old_dtype, FloatType):
-        return RHSExpression(new_dtype, lambda _value:
-            'fptosi {} {} to {}'.format(old_dtype._llvm_id,
-                _value, new_dtype._llvm_id), (value,))
+        op = 'fptosi'
     else:
         return NotImplemented
+    return RHSExpression(
+        new_dtype,
+        lambda _value:
+            '{} {} to {}'.format(op, _value._llvm_ty_val, new_dtype._llvm_id),
+        (value,))
 
 @UnsignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
@@ -1183,23 +1182,22 @@ def _typecast(new_dtype, value):
         return value
     elif isinstance(old_dtype, UnsignedIntegerType):
         if new_dtype.bits > old_dtype.bits:
-            return RHSExpression(new_dtype, lambda _value:
-                'zext {} {} to {}'.format(old_dtype._llvm_id,
-                    _value, new_dtype._llvm_id), (value,))
+            op = 'zext'
         elif new_dtype.bits < old_dtype.bits:
-            return RHSExpression(new_dtype, lambda _value:
-                'trunc {} {} to {}'.format(old_dtype._llvm_id,
-                    _value, new_dtype._llvm_id), (value,))
+            op = 'trunc'
         else:
             raise ValueError
     elif isinstance(old_dtype, SignedIntegerType):
         return NotImplemented
     elif isinstance(old_dtype, FloatType):
-        return RHSExpression(new_dtype, lambda _value:
-            'fptoui {} {} to {}'.format(old_dtype._llvm_id,
-                _value, new_dtype._llvm_id), (value,))
+        op = 'fptoui'
     else:
         return NotImplemented
+    return RHSExpression(
+        new_dtype,
+        lambda _value:
+            '{} {} to {}'.format(op, _value._llvm_ty_val, new_dtype._llvm_id),
+        (value,))
 
 @FloatType.typecast.register
 def _typecast(new_dtype, value):
@@ -1210,15 +1208,16 @@ def _typecast(new_dtype, value):
         return NotImplemented
         # TODO: use fpext and fptrunc
     elif isinstance(old_dtype, SignedIntegerType):
-        return RHSExpression(new_dtype, lambda _value:
-            'sitofp {} {} to {}'.format(old_dtype._llvm_id,
-                _value, new_dtype._llvm_id), (value,))
+        op = 'sitofp'
     elif isinstance(old_dtype, UnsignedIntegerType):
-        return RHSExpression(new_dtype, lambda _value:
-            'uitofp {} {} to {}'.format(old_dtype._llvm_id,
-                _value, new_dtype._llvm_id), (value,))
+        op = 'uitofp'
     else:
         return NotImplemented
+    return RHSExpression(
+        new_dtype,
+        lambda _value:
+            '{} {} to {}'.format(op, _value._llvm_ty_val, new_dtype._llvm_id),
+        (value,))
 
 del _dtype_class, _flag, _op, _llvm_op, _gen_bin_op, _neg_custom, _typecast
 
