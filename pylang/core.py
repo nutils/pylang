@@ -197,7 +197,51 @@ class PointerType(FirstClassType):
 
 class VectorType(FirstClassType):
 
-    pass
+    def __new__(cls, dtype, length):
+
+        self = super().__new__(cls, '<{} x {}>'.format(length, dtype._llvm_id))
+        self._element_dtype = dtype
+        self._length = length
+        return self
+
+    def __getnewargs__(self):
+
+        return self._element_dtype, self._length
+
+    def create(self, elements):
+
+        # TODO: use notation mentioned in
+        # http://llvm.org/docs/LangRef.html#complex-constants
+        # if all elements are constant
+        return LLVMIdentifier('undef', self).replace(elements)
+
+    def _expression_getattr(self, expression, attr):
+
+        if attr == 'replace':
+            return functools.partial(self._replace, expression)
+        else:
+            return super()._expression_getattr(expression, attr)
+
+    def _replace(self, expression, elements):
+
+        if isinstance(elements, collections.Mapping):
+            for index, element in elements.items():
+                expression = InsertElement(expression, element, index)
+        elif isinstance(elements, collections.Sequence):
+            index = 0
+            for element in elements:
+                expression = InsertElement(expression, element, index)
+                index += 1
+            if index != self._length:
+                raise ValueError('length of `elements` does not match with'\
+                    ' length of vector')
+        else:
+            raise ValueError('`elements` should be a mapping or a sequence')
+        return expression
+
+    def _expression_getitem(self, expression, index):
+
+        return ExtractElement(expression, index)
 
 
 class ArrayType(AggregateType):
@@ -591,6 +635,70 @@ class GetElementPointer(Expression):
         statement.insert(0, '  {} = getelementptr {}'.format(
             result._llvm_id, pointer._llvm_ty_val))
         bb._append_statement(', '.join(statement))
+        return bb, result
+
+
+class ExtractElement(Expression):
+
+    def __new__(cls, vector, index):
+
+        assert isinstance(vector, Expression) \
+            and isinstance(vector.dtype, VectorType)
+        # TODO: The documentation is unclear about the signedness of `index`.
+        # Assuming signed here.  Find out what llvm uses.
+        if isinstance(index, numbers.Integral):
+            # TODO: use smallest integer type to represent this number
+            index = int32_t(index)
+        assert isinstance(index, Expression) \
+            and isinstance(index.dtype, SignedIntegerType)
+
+        self = super().__new__(cls, vector.dtype._element_dtype)
+        self._vector = vector
+        self._index = index
+        return self
+
+    def _eval(self, bb):
+
+        bb, vector = self._vector._eval(bb)
+        bb, index = self._index._eval(bb)
+
+        result = bb._reserve_variable(self.dtype)
+        bb._append_statement('  {} = extractelement {}, {}'.format(
+            result._llvm_id, vector._llvm_ty_val, index._llvm_ty_val))
+        return bb, result
+
+
+class InsertElement(Expression):
+
+    def __new__(cls, vector, element, index):
+
+        assert isinstance(vector, Expression) \
+            and isinstance(vector.dtype, VectorType)
+        element = vector.dtype._element_dtype(element)
+        # TODO: The documentation is unclear about the signedness of `index`.
+        # Assuming signed here.  Find out what llvm uses.
+        if isinstance(index, numbers.Integral):
+            # TODO: use smallest integer type to represent this number
+            index = int32_t(index)
+        assert isinstance(index, Expression) \
+            and isinstance(index.dtype, SignedIntegerType)
+
+        self = super().__new__(cls, vector.dtype)
+        self._vector = vector
+        self._element = element
+        self._index = index
+        return self
+
+    def _eval(self, bb):
+
+        bb, vector = self._vector._eval(bb)
+        bb, element = self._element._eval(bb)
+        bb, index = self._index._eval(bb)
+
+        result = bb._reserve_variable(self.dtype)
+        bb._append_statement('  {} = insertelement {}, {}, {}'.format(
+            result._llvm_id, vector._llvm_ty_val, element._llvm_ty_val,
+            index._llvm_ty_val))
         return bb, result
 
 
@@ -1121,6 +1229,7 @@ float64_t = FloatType('double')
 
 def _gen_bin_op(dtype_class, py_dtype, llvm_op, return_dtype=None):
     def custom(l, r):
+        _return_dtype = return_dtype
         if isinstance(l, Expression) and isinstance(l.dtype, dtype_class):
             if isinstance(r, Expression) and l.dtype == r.dtype:
                 pass
@@ -1131,10 +1240,16 @@ def _gen_bin_op(dtype_class, py_dtype, llvm_op, return_dtype=None):
         elif isinstance(r, Expression) and isinstance(r.dtype, dtype_class) \
                 and isinstance(l, py_dtype):
             l = r.dtype(l)
+        elif isinstance(l, Expression) and isinstance(r, Expression) \
+                and isinstance(l.dtype, VectorType) \
+                and isinstance(l.dtype._element_dtype, dtype_class) \
+                and r.dtype == l.dtype:
+            if _return_dtype is not None:
+                _return_dtype = VectorType(_return_dtype)
         else:
             return NotImplemented
         return RHSExpression(
-            l.dtype if return_dtype is None else return_dtype,
+            l.dtype if _return_dtype is None else _return_dtype,
             lambda _l, _r: '{} {}, {}'.format(
                 llvm_op, _l._llvm_ty_val, _r._llvm_id),
             (l, r))
@@ -1163,7 +1278,10 @@ for _op, _llvm_op in ((lt, 'olt'), (le, 'ole'), (gt, 'ogt'), (ge, 'oge'),
 @neg.register
 def _neg_custom(value):
     if isinstance(value, Expression) and \
-            isinstance(value.dtype, (IntegerType, FloatType)):
+            (isinstance(value.dtype, (IntegerType, FloatType)) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype,
+                (IntegerType, FloatType))):
         return 0-value
     else:
         return NotImplemented
