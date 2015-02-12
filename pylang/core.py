@@ -1170,6 +1170,8 @@ def _neg_custom(value):
 
 @SignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
+    if isinstance(value.dtype, UnsignedIntegerType):
+        value = ForceDtype(value, SignedIntegerType(value.dtype.bits))
     old_dtype = value.dtype
     if old_dtype == new_dtype:
         return value
@@ -1180,8 +1182,6 @@ def _typecast(new_dtype, value):
             op = 'trunc'
         else:
             raise ValueError
-    elif isinstance(old_dtype, UnsignedIntegerType):
-        return NotImplemented
     elif isinstance(old_dtype, FloatType):
         op = 'fptosi'
     else:
@@ -1194,6 +1194,8 @@ def _typecast(new_dtype, value):
 
 @UnsignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
+    if isinstance(value.dtype, SignedIntegerType):
+        value = ForceDtype(value, UnsignedIntegerType(value.dtype.bits))
     old_dtype = value.dtype
     if old_dtype == new_dtype:
         return value
@@ -1204,8 +1206,6 @@ def _typecast(new_dtype, value):
             op = 'trunc'
         else:
             raise ValueError
-    elif isinstance(old_dtype, SignedIntegerType):
-        return NotImplemented
     elif isinstance(old_dtype, FloatType):
         op = 'fptoui'
     else:
