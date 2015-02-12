@@ -1340,8 +1340,16 @@ def _typecast(new_dtype, value):
     if old_dtype == new_dtype:
         return value
     elif isinstance(old_dtype, FloatType):
-        return NotImplemented
-        # TODO: use fpext and fptrunc
+        fp_order = ('half', 'float', 'double')
+        if old_dtype._llvm_id in fp_order and new_dtype._llvm_id in fp_order:
+            old_index = fp_order.index(old_dtype._llvm_id)
+            new_index = fp_order.index(new_dtype._llvm_id)
+            if old_index < new_index:
+                op = 'fpext'
+            else:
+                op = 'fptrunc'
+        else:
+            return NotImplemented
     elif isinstance(old_dtype, SignedIntegerType):
         op = 'sitofp'
     elif isinstance(old_dtype, UnsignedIntegerType):
