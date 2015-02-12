@@ -433,6 +433,23 @@ class Expression:
     def __rfloordiv__(r, l): return floordiv._operator_call(l, r)
 
 
+class ForceDtype(Expression):
+
+    def __new__(cls, expression, dtype):
+
+        assert isinstance(expression, Expression)
+
+        self = super().__new__(cls, dtype)
+        self._expression = expression
+        return self
+
+    def _eval(self, bb):
+
+        bb, expression = self._expression._eval(bb)
+        expression = LLVMIdentifier(expression._llvm_id, self.dtype)
+        return bb, expression
+
+
 class RHSExpression(Expression):
 
     def __new__(cls, dtype, rhs_generator, args):
