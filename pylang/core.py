@@ -80,6 +80,13 @@ class TypeBase:
         return type(self) == type(other) \
             and self.__getnewargs__() == other.__getnewargs__()
 
+    def __call__(self, expression):
+
+        if isinstance(expression, Expression) and expression.dtype == self:
+            return expression
+        else:
+            raise NotImplementedError
+
     @property
     def pointer(self):
 
