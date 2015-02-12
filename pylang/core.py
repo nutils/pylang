@@ -820,7 +820,7 @@ class BasicBlock:
         index = self._function_basic_blocks.index(self)
         labels = tuple(
             LLVMIdentifier(
-                '%__label_{:04d}'.format(len(self._function_basic_blocks)+i),
+                '%__L{:04d}'.format(len(self._function_basic_blocks)+i),
                 label_t)
             for i in range(n))
         bbs = tuple(
