@@ -24,6 +24,7 @@ import weakref
 import functools
 import operator
 import collections
+import itertools
 
 
 class MultipleDispatchFunction:
@@ -410,9 +411,31 @@ class SignedIntegerType(IntegerType):
 
     typecast = MultipleDispatchFunction(2)
 
+    @classmethod
+    def smallest_pow2(cls, value):
+
+        assert isinstance(value, numbers.Integral)
+        for i in itertools.count(3):
+            bits = 2**i
+            if -2**(bits-1) <= value < 2**(bits-1):
+                return cls(bits)(value)
+
+
 class UnsignedIntegerType(IntegerType):
 
     typecast = MultipleDispatchFunction(2)
+
+    @classmethod
+    def smallest_pow2(cls, value):
+
+        assert isinstance(value, numbers.Integral)
+        if value < 0:
+            raise ValueError(
+                'cannot represent negative integer as {!r}'.format(cls))
+        for i in itertools.count(3):
+            bits = 2**i
+            if value < 2**bits:
+                return cls(bits)(value)
 
 
 class FloatType(FirstClassType):
