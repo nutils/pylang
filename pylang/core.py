@@ -468,11 +468,27 @@ class FloatType(FirstClassType):
 
 class Expression:
 
-    def __new__(cls, dtype):
+    def __new__(cls, dtype, children):
 
         self = super().__new__(cls)
         self.dtype = dtype
+        self._children = tuple(children)
         return self
+
+    def _eval_tree(self, bb, cache):
+
+        try:
+            return bb, cache[self]
+        except KeyError:
+            pass
+
+        children = []
+        for child in self._children:
+            bb, child = child._eval_tree(bb, cache)
+            children.append(child)
+        bb, value = self._eval(bb, *children)
+        cache[self] = value
+        return bb, value
 
     @property
     def _llvm_ty_val(self):
@@ -506,35 +522,27 @@ class ForceDtype(Expression):
 
         assert isinstance(expression, Expression)
 
-        self = super().__new__(cls, dtype)
-        self._expression = expression
+        self = super().__new__(cls, dtype, (expression,))
         return self
 
-    def _eval(self, bb):
+    def _eval(self, bb, expression):
 
-        bb, expression = self._expression._eval(bb)
-        expression = LLVMIdentifier(expression._llvm_id, self.dtype)
-        return bb, expression
+        return bb, LLVMIdentifier(expression._llvm_id, self.dtype)
 
 
 class RHSExpression(Expression):
 
     def __new__(cls, dtype, rhs_generator, args):
 
-        self = super().__new__(cls, dtype)
+        self = super().__new__(cls, dtype, args)
         self._rhs_generator = rhs_generator
-        self._args = tuple(args)
         return self
 
-    def _eval(self, bb):
+    def _eval(self, bb, *args):
 
-        evaluated_args = []
-        for arg in self._args:
-            bb, arg = arg._eval(bb)
-            evaluated_args.append(arg)
         result = bb._reserve_variable(self.dtype)
         bb._append_statement('  {} = {}'.format(
-            result._llvm_id, self._rhs_generator(*evaluated_args)))
+            result._llvm_id, self._rhs_generator(*args)))
         return bb, result
 
 
@@ -542,7 +550,7 @@ class LLVMIdentifier(Expression):
 
     def __new__(cls, llvm_id, dtype):
 
-        self = super().__new__(cls, dtype)
+        self = super().__new__(cls, dtype, ())
         self._llvm_id = llvm_id
         return self
 
@@ -555,7 +563,7 @@ class StringConstant(Expression):
 
     def __new__(cls, value):
 
-        self = super().__new__(cls, int8_t.pointer)
+        self = super().__new__(cls, int8_t.pointer, ())
         self._value = value
         return self
 
@@ -640,23 +648,17 @@ class GetElementPointer(Expression):
         else:
             indices = int8_t(0), index
 
-        self = super().__new__(cls, dtype)
+        self = super().__new__(cls, dtype, (pointer,)+indices)
         self._pointer = pointer
         self._indices = indices
         return self
 
-    def _eval(self, bb):
-
-        bb, pointer = self._pointer._eval(bb)
-
-        statement = []
-        for index in self._indices:
-            bb, index = index._eval(bb)
-            statement.append(index._llvm_ty_val)
+    def _eval(self, bb, pointer, *indices):
 
         result = bb._reserve_variable(self.dtype)
-        statement.insert(0, '  {} = getelementptr {}'.format(
-            result._llvm_id, pointer._llvm_ty_val))
+        statement = ['  {} = getelementptr {}'.format(
+            result._llvm_id, pointer._llvm_ty_val)]
+        statement.extend(index._llvm_ty_val for index in indices)
         bb._append_statement(', '.join(statement))
         return bb, result
 
@@ -675,15 +677,10 @@ class ExtractElement(Expression):
             assert isinstance(index, Expression) \
                 and isinstance(index.dtype, SignedIntegerType)
 
-        self = super().__new__(cls, vector.dtype._element_dtype)
-        self._vector = vector
-        self._index = index
-        return self
+        return super().__new__(cls, vector.dtype._element_dtype,
+            (vector, index))
 
-    def _eval(self, bb):
-
-        bb, vector = self._vector._eval(bb)
-        bb, index = self._index._eval(bb)
+    def _eval(self, bb, vector, index):
 
         result = bb._reserve_variable(self.dtype)
         bb._append_statement('  {} = extractelement {}, {}'.format(
@@ -706,17 +703,10 @@ class InsertElement(Expression):
             assert isinstance(index, Expression) \
                 and isinstance(index.dtype, SignedIntegerType)
 
-        self = super().__new__(cls, vector.dtype)
-        self._vector = vector
-        self._element = element
-        self._index = index
-        return self
+        return super().__new__(cls, vector.dtype,
+            (vector, element, index))
 
-    def _eval(self, bb):
-
-        bb, vector = self._vector._eval(bb)
-        bb, element = self._element._eval(bb)
-        bb, index = self._index._eval(bb)
+    def _eval(self, bb, vector, element, index):
 
         result = bb._reserve_variable(self.dtype)
         bb._append_statement('  {} = insertelement {}, {}, {}'.format(
@@ -736,14 +726,11 @@ class ExtractValue(Expression):
             indices = aggregate_value._indices+indices
             aggregate_value = aggregate_value._aggregate_value
 
-        self = super().__new__(cls, dtype)
-        self._aggregate_value = aggregate_value
+        self = super().__new__(cls, dtype, (aggregate_value,))
         self._indices = indices
         return self
 
-    def _eval(self, bb):
-
-        bb, aggregate_value = self._aggregate_value._eval(bb)
+    def _eval(self, bb, aggregate_value):
 
         result = bb._reserve_variable(self.dtype)
         statement = ['  {} = extractvalue {}'.format(
@@ -790,27 +777,16 @@ class DereferencePointer(Expression):
         # http://llvm.org/docs/LangRef.html#load-instruction
         # http://llvm.org/docs/LangRef.html#store-instruction
 
-        self = super().__new__(cls, address.dtype.reference_dtype)
+        self = super().__new__(cls, address.dtype.reference_dtype, (address,))
         self.address = address
         return self
 
-    def _eval(self, bb):
-
-        bb, address = self.address._eval(bb)
+    def _eval(self, bb, address):
 
         result = bb._reserve_variable(self.dtype)
         bb._append_statement('  {} = load {}'.format(
             result._llvm_id, address._llvm_ty_val))
         return bb, result
-
-    def _assign(self, bb, value):
-
-        bb, address = self.address._eval(bb)
-        bb, value = value._eval(bb)
-
-        bb._append_statement('  store {}, {}'.format(
-            value._llvm_ty_val, address._llvm_ty_val))
-        return bb, value
 
 
 class BasicBlock:
@@ -966,6 +942,11 @@ class BasicBlock:
         self._append_statement(', '.join(statement))
         return result
 
+    def store(self, address, value):
+
+        self._append_statement('  store {}, {}'.format(
+            value._llvm_ty_val, address._llvm_ty_val))
+
 
 class ExtendedBlock:
 
@@ -994,8 +975,18 @@ class ExtendedBlock:
 
     def eval(self, expression):
 
-        self._tail, value = expression._eval(self._tail)
+        cache = {}
+        self._tail, value = expression._eval_tree(self._tail, cache)
         return value
+
+    def eval_multi(self, expressions):
+
+        cache = {}
+        values = []
+        for expression in expressions:
+            self._tail, value = expression._eval_tree(self._tail, cache)
+            values.append(value)
+        return values
 
     def assign(self, variable, expression):
 
@@ -1003,7 +994,8 @@ class ExtendedBlock:
             variable.dtype._assign_helper(self, variable, expression)
         else:
             expression = variable.dtype(expression)
-            self._tail, expression = variable._assign(self._tail, expression)
+            address, value = self.eval_multi((variable.address, expression))
+            return self._tail.store(address, value)
 
     def add_phi_node(self, dtype):
 
@@ -1060,9 +1052,8 @@ class ExtendedBlock:
         args = list(args)
         for i in range(len(function_dtype._arguments_dtypes)):
             args[i] = function_dtype._arguments_dtypes[i](args[i])
-        args = tuple(map(self.eval, args))
 
-        return self._tail.call(function_ptr, *args)
+        return self._tail.call(function_ptr, *self.eval_multi(args))
 
     def allocate_stack(self, dtype, n_elements=1):
 
