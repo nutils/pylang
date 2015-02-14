@@ -623,9 +623,11 @@ class GetElementPointer(Expression):
             else:
                 assert isinstance(index, Expression) and index.dtype == int32_t
         else:
-            assert isinstance(index, numbers.Integral)  \
-                or isinstance(index, Expression) \
-                and isinstance(index.dtype, SignedIntegerType)
+            if isinstance(index, numbers.Integral):
+                index = SignedIntegerType.smallest_pow2(index)
+            else:
+                assert isinstance(index, Expression) \
+                    and isinstance(index.dtype, SignedIntegerType)
 
         if isinstance(pointer, GetElementPointer):
             assert not \
@@ -636,7 +638,7 @@ class GetElementPointer(Expression):
         elif dtype == pointer.dtype:
             indices = index,
         else:
-            indices = 0, index
+            indices = int8_t(0), index
 
         self = super().__new__(cls, dtype)
         self._pointer = pointer
@@ -649,8 +651,6 @@ class GetElementPointer(Expression):
 
         statement = []
         for index in self._indices:
-            if isinstance(index, numbers.Integral):
-                index = bb._module.intptr_t(index)
             bb, index = index._eval(bb)
             statement.append(index._llvm_ty_val)
 
@@ -670,10 +670,10 @@ class ExtractElement(Expression):
         # TODO: The documentation is unclear about the signedness of `index`.
         # Assuming signed here.  Find out what llvm uses.
         if isinstance(index, numbers.Integral):
-            # TODO: use smallest integer type to represent this number
-            index = int32_t(index)
-        assert isinstance(index, Expression) \
-            and isinstance(index.dtype, SignedIntegerType)
+            index = SignedIntegerType.smallest_pow2(index)
+        else:
+            assert isinstance(index, Expression) \
+                and isinstance(index.dtype, SignedIntegerType)
 
         self = super().__new__(cls, vector.dtype._element_dtype)
         self._vector = vector
@@ -701,10 +701,10 @@ class InsertElement(Expression):
         # TODO: The documentation is unclear about the signedness of `index`.
         # Assuming signed here.  Find out what llvm uses.
         if isinstance(index, numbers.Integral):
-            # TODO: use smallest integer type to represent this number
-            index = int32_t(index)
-        assert isinstance(index, Expression) \
-            and isinstance(index.dtype, SignedIntegerType)
+            index = SignedIntegerType.smallest_pow2(index)
+        else:
+            assert isinstance(index, Expression) \
+                and isinstance(index.dtype, SignedIntegerType)
 
         self = super().__new__(cls, vector.dtype)
         self._vector = vector
