@@ -79,18 +79,27 @@ def _equivalent_c_dtype(dtype, typedefs):
 
 def compile_and_load(module):
 
-    lib_path = None
-    source_path = None
+    delete_paths = []
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.so', delete=False)\
                 as lib:
             lib_path = lib.name
+            delete_paths.append(lib_path)
         with tempfile.NamedTemporaryFile(mode='w', suffix='.ll', delete=False)\
                 as source:
             source_path = source.name
+            delete_paths.append(source_path)
             module._generate_ir(source)
-        subprocess.check_call(['clang', '-Wall', '-O3', '-shared', '-fPIC',
-            '-o', lib_path, source_path])
+        clang_args = ['clang', '-Wall', '-O3', '-shared', '-fPIC',
+            '-o', lib_path]
+        for ir in module._link_ir:
+            with tempfile.NamedTemporaryFile(
+                    mode='w', suffix='.ll', delete=False) as extra_file:
+                delete_paths.append(extra_file.name)
+                extra_file.write(ir)
+                clang_args.append(extra_file.name)
+        clang_args.append(source_path)
+        subprocess.check_call(clang_args)
         ffi = cffi.FFI()
         function_cdefs = []
         typedefs = collections.OrderedDict()
@@ -108,10 +117,9 @@ def compile_and_load(module):
             function_cdefs)))
         return ffi.dlopen(lib_path)
     finally:
-        if source_path:
-            os.remove(source_path)
-        if lib_path and os.path.exists(lib_path):
-            os.remove(lib_path)
+        for path in delete_paths:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 # vim: ts=4:sts=4:sw=4:et

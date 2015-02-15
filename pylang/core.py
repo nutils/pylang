@@ -1068,6 +1068,7 @@ class Module:
         self._functions = {}
         self._function_definitions = []
         self._string_constants = collections.OrderedDict()
+        self._link_ir = []
 
         # TODO: depends on the target platform
         self.size_t = uint64_t
