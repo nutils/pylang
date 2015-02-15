@@ -26,7 +26,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import pylang
 from pylang.core import *
-from pylang import utils, ee
+from pylang import utils, ee, foreign
 
 
 def compile_and_run(module):
@@ -241,6 +241,30 @@ def test_fib_loop(n):
         print('fib({}) = {}'.format(i, mod.fib(i)))
 
 
+def test_fib_cplusplus(n):
+
+    module = Module()
+
+    fib, = foreign.define_cplusplus_functions(
+        module,
+        [['fib', FunctionType(int32_t, (int32_t,), False)]],
+        '''
+            #include <stdint.h>
+            extern "C" int32_t fib(int32_t n)
+            {
+                if (n < 3)
+                    return 1;
+                else
+                    return fib(n-2) + fib(n-1);
+            }
+        ''')
+
+    mod = ee.compile_and_load(module)
+
+    for i in range(1, n+1):
+        print('fib({}) = {}'.format(i, mod.fib(i)))
+
+
 def test_typecast():
 
     module = Module()
@@ -390,6 +414,7 @@ if __name__ == '__main__':
     test4()
     test_fib_recursive(10)
     test_fib_loop(10)
+    test_fib_cplusplus(10)
     test_typecast()
     test_float_loop()
 #   test_struct()
