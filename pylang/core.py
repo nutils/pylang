@@ -976,17 +976,15 @@ class ExtendedBlock:
     def eval(self, expression):
 
         cache = {}
-        self._tail, value = expression._eval_tree(self._tail, cache)
-        return value
-
-    def eval_multi(self, expressions):
-
-        cache = {}
-        values = []
-        for expression in expressions:
+        if isinstance(expression, (tuple, list)):
+            values = []
+            for expression in expression:
+                self._tail, value = expression._eval_tree(self._tail, cache)
+                values.append(value)
+            return values
+        else:
             self._tail, value = expression._eval_tree(self._tail, cache)
-            values.append(value)
-        return values
+            return value
 
     def assign(self, variable, expression):
 
@@ -994,7 +992,7 @@ class ExtendedBlock:
             variable.dtype._assign_helper(self, variable, expression)
         else:
             expression = variable.dtype(expression)
-            address, value = self.eval_multi((variable.address, expression))
+            address, value = self.eval((variable.address, expression))
             return self._tail.store(address, value)
 
     def add_phi_node(self, dtype):
@@ -1053,7 +1051,7 @@ class ExtendedBlock:
         for i in range(len(function_dtype._arguments_dtypes)):
             args[i] = function_dtype._arguments_dtypes[i](args[i])
 
-        return self._tail.call(function_ptr, *self.eval_multi(args))
+        return self._tail.call(function_ptr, *self.eval(args))
 
     def allocate_stack(self, dtype, n_elements=1):
 
