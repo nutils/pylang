@@ -26,31 +26,18 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import pylang
 from pylang.core import *
-from pylang import utils
+from pylang import utils, ee
 
 
 def compile_and_run(module):
 
-    import sys
-    import subprocess
-    import os
+    if '--show-ir' in sys.argv:
+        print('-'*80)
+        module._generate_ir(sys.stdout)
+        print('-'*80)
 
-    os.chdir( '/tmp' )
-
-    with open( '/tmp/test.ll', 'w' ) as ll:
-        module._generate_ir( ll )
-
-    print('-'*80)
-    module._generate_ir( sys.stdout )
-    print('-'*80)
-
-    subprocess.check_call( [ 'clang', '-S', '-O3', '-emit-llvm', '/tmp/test.ll' ] )
-    print('-'*80)
-    with open( '/tmp/test.ll', 'r' ) as ll:
-        print( ll.read() )
-    print('-'*80)
-
-    subprocess.check_call( [ 'lli', '/tmp/test.ll' ] )
+    mod = ee.compile_and_load(module)
+    mod.main()
 
 
 def test1():
@@ -219,12 +206,10 @@ def test_fib_recursive(n):
     fib_lt3.ret(1)
     fib_ge3.ret(fib_ge3.call(fib, fib_n-1)+fib_ge3.call(fib, fib_n-2))
 
-    main, main_entry = module.define_function('main', int32_t)
-    result = main_entry.call(fib, n)
-    main_entry.call('printf', b'fib(%d) = %d\n', int32_t(n), result)
-    main_entry.ret(0)
+    mod = ee.compile_and_load(module)
 
-    compile_and_run(module)
+    for i in range(1, n+1):
+        print('fib({}) = {}'.format(i, mod.fib(i)))
 
 
 def test_fib_loop(n):
@@ -250,12 +235,10 @@ def test_fib_loop(n):
     fib_body.branch([lt(i, fib_n), fib_body], fib_exit)
     fib_exit.ret(val_2)
 
-    main, main_entry = module.define_function('main', int32_t)
-    result = main_entry.call(fib, n)
-    main_entry.call('printf', b'fib(%d) = %d\n', int32_t(n), result)
-    main_entry.ret(0)
+    mod = ee.compile_and_load(module)
 
-    compile_and_run(module)
+    for i in range(1, n+1):
+        print('fib({}) = {}'.format(i, mod.fib(i)))
 
 
 def test_typecast():
