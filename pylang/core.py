@@ -1287,10 +1287,10 @@ for _op, _llvm_op in ((lt, 'olt'), (le, 'ole'), (gt, 'ogt'), (ge, 'oge'),
 @neg.register
 def _neg_custom(value):
     if isinstance(value, Expression) and \
-            (isinstance(value.dtype, (IntegerType, FloatType)) \
+            (isinstance(value.dtype, (SignedIntegerType, FloatType)) \
             or isinstance(value.dtype, VectorType) \
             and isinstance(value.dtype._element_dtype,
-                (IntegerType, FloatType))):
+                (SignedIntegerType, FloatType))):
         return 0-value
     else:
         return NotImplemented
