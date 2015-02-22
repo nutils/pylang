@@ -593,30 +593,26 @@ class Select(Expression):
 
     def __new__(cls, condition, value_true, value_false):
 
-        # TODO: allow vectors (also for condition)
-
+        assert isinstance(condition, Expression)
+        assert isinstance(value_true, Expression)
+        assert isinstance(value_false, Expression)
         assert value_true.dtype == value_false.dtype
-        assert condition._dtype == int1_t
+        if isinstance(condition.dtype, VectorType):
+            assert condition.dtype._element_dtype == int1_t
+            assert isinstance(value_true.dtype, VectorType)
+            assert value_true.dtype._length == condition.dtype._length
+        else:
+            assert condition.dtype == int1_t
 
-        self = super().__new__(cls, value_true.dtype)
-        self._condition = condition
-        if not self._condition.dtype == 'i1':
-            raise ValueError( "`condition` should have dtype 'i1', got {!r}.".format( self._condition.dtype ) )
+        return super().__new__(cls, value_true.dtype,
+            (condition, value_true, value_false))
 
-        dtype, self._value_true, self._value_false = coerce_default( value_true, value_false )
-
-        Expression.__init__( self, dtype )
-
-    def _eval(self, bb):
-
-        bb, condition = self._condition._eval(bb)
-        bb, value_true = self._value_true._eval(bb)
-        bb, value_false = self._value_false._eval(bb)
+    def _eval(self, bb, condition, value_true, value_false):
 
         result = bb._reserve_variable(self.dtype)
         bb._append_statement('  {} = select {}, {}, {}'.format(
-            result._llvm_id, condition._llvm_ty_val,
-            self._value_true._llvm_ty_val, self._value_false._llvm_ty_val))
+            result._llvm_id, condition._llvm_ty_val, value_true._llvm_ty_val,
+            value_false._llvm_ty_val))
         return bb, result
 
 
