@@ -1172,7 +1172,7 @@ class Module:
 
         for line in self._header:
             print(line, file=output)
-        print()
+        print(file=output)
         for header, bb_entry in self._function_definitions:
             print('define {} {{'.format(header), file=output)
             for basic_block in bb_entry._function_basic_blocks:
