@@ -503,7 +503,14 @@ class Expression:
 
         return self.dtype._expression_getitem(self, index)
 
-    def __neg__      (self): return neg._operator_call(self)
+    def __neg__(self):
+
+        value = neg._operator_call(self)
+        if value == NotImplemented:
+            raise TypeError
+        else:
+            return value
+
     def __add__      (l, r): return add._operator_call(l, r)
     def __radd__     (r, l): return add._operator_call(l, r)
     def __sub__      (l, r): return sub._operator_call(l, r)
