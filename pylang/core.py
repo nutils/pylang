@@ -1208,6 +1208,7 @@ sub = MultipleDispatchFunction(2)
 mul = MultipleDispatchFunction(2)
 truediv = MultipleDispatchFunction(2)
 floordiv = MultipleDispatchFunction(2)
+rtzdiv = MultipleDispatchFunction(2)
 lt = MultipleDispatchFunction(2)
 le = MultipleDispatchFunction(2)
 gt = MultipleDispatchFunction(2)
@@ -1266,13 +1267,16 @@ def _gen_bin_op(dtype_class, py_dtype, llvm_op, return_dtype=None):
 
 for _dtype_class, _flag in \
         ((SignedIntegerType, 's'), (UnsignedIntegerType, 'u')):
-    for _op, _llvm_op in ((add, 'add'), (sub, 'sub'), (mul, 'mul'),
-            (floordiv, _flag+'div')):
+    for _op, _llvm_op in ((add, 'add'), (sub, 'sub'), (mul, 'mul')):
         _op.register(_gen_bin_op(_dtype_class, numbers.Integral, _llvm_op))
     for _op, _llvm_op in ((lt, _flag+'lt'), (le, _flag+'le'), (gt, _flag+'gt'),
             (ge, _flag+'ge'), (eq, 'eq'), (ne, 'ne')):
         _op.register(_gen_bin_op(
             _dtype_class, numbers.Integral, 'icmp '+_llvm_op, int1_t))
+
+rtzdiv.register(_gen_bin_op(SignedIntegerType, numbers.Integral, 'sdiv'))
+rtzdiv.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'udiv'))
+floordiv.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'udiv'))
 
 for _op, _llvm_op in ((add, 'fadd'), (sub, 'fsub'), (mul, 'fmul'),
         (truediv, 'fdiv')):
@@ -1283,6 +1287,29 @@ for _op, _llvm_op in ((lt, 'olt'), (le, 'ole'), (gt, 'ogt'), (ge, 'oge'),
         (eq, 'oeq'), (ne, 'one')):
     _op.register(_gen_bin_op(
         FloatType, numbers.Real, 'fcmp '+_llvm_op, int1_t))
+
+@floordiv.register
+def _operator(l, r):
+    if isinstance(l, Expression) and isinstance(l.dtype, SignedIntegerType):
+        if isinstance(r, Expression) and l.dtype == r.dtype:
+            pass
+        elif isinstance(r, py_dtype):
+            r = l.dtype(r)
+        else:
+            return NotImplemented
+    elif isinstance(r, Expression) and isinstance(r.dtype, SignedIntegerType) \
+            and isinstance(l, py_dtype):
+        l = r.dtype(l)
+    elif isinstance(l, Expression) and isinstance(r, Expression) \
+            and isinstance(l.dtype, VectorType) \
+            and isinstance(l.dtype._element_dtype, SignedIntegerType) \
+            and r.dtype == l.dtype:
+        if return_dtype is not None:
+            return_dtype = VectorType(return_dtype)
+    else:
+        return NotImplemented
+    return Select(ge(l*r, 0), rtzdiv(l, r),
+        Select(ge(l, 0), rtzdiv(l-1, r)-1, rtzdiv(l+1, r)-1))
 
 @neg.register
 def _neg_custom(value):
@@ -1372,5 +1399,6 @@ def _typecast(new_dtype, value):
         (value,))
 
 del _dtype_class, _flag, _op, _llvm_op, _gen_bin_op, _neg_custom, _typecast
+del _operator
 
 # vim: ts=4:sts=4:sw=4:et
