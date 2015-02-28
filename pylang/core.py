@@ -511,6 +511,14 @@ class Expression:
         else:
             return value
 
+    def __abs__(self):
+
+        value = abs_._operator_call(self)
+        if value == NotImplemented:
+            raise TypeError
+        else:
+            return value
+
     def __add__      (l, r): return add._operator_call(l, r)
     def __radd__     (r, l): return add._operator_call(l, r)
     def __sub__      (l, r): return sub._operator_call(l, r)
@@ -1088,6 +1096,9 @@ class Module:
         self.declare_function('printf', int32_t,
             [int8_t.pointer, 'nocapture', 'readonly'], ...)
 
+        self.declare_function('llvm.fabs.f32', float32_t, float32_t)
+        self.declare_function('llvm.fabs.f64', float64_t, float64_t)
+
     @staticmethod
     def _generate_function_type_header(name, return_dtype, arg_dtypes,
             function_attributes, with_arg_expressions):
@@ -1222,6 +1233,7 @@ gt = MultipleDispatchFunction(2)
 ge = MultipleDispatchFunction(2)
 eq = MultipleDispatchFunction(2)
 ne = MultipleDispatchFunction(2)
+abs_ = MultipleDispatchFunction(1)
 
 
 
@@ -1328,6 +1340,32 @@ def _neg_custom(value):
         return 0-value
     else:
         return NotImplemented
+
+@abs_.register
+def _operator(value):
+    if not isinstance(value, Expression):
+        return NotImplemented
+    elif isinstance(value.dtype, UnsignedIntegerType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, UnsignedIntegerType):
+        return value
+    elif isinstance(value.dtype, SignedIntegerType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, SignedIntegerType):
+        return Select(ge(value, 0), value, -value)
+    elif isinstance(value.dtype, FloatType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, FloatType):
+        if isinstance(value.dtype, VectorType):
+            d = value.dtype._element_dtype
+        else:
+            d = value.dtype
+        f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
+        return RHSExpression(
+            value.dtype,
+            lambda _value: 'call {} @llvm.fabs.{}({})'.format(
+                _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
+            (value,))
 
 @SignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
