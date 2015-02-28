@@ -105,6 +105,8 @@ def compile_and_load(module):
         typedefs = collections.OrderedDict()
         eq_c_dtype = lambda d: _equivalent_c_dtype(d, typedefs)
         for name, function in module._functions.items():
+            if name.startswith('llvm.'):
+                continue
             dtype = function.dtype.reference_dtype
             function_cdefs.append('{} {}({});'.format(
                 eq_c_dtype(dtype._return_dtype),
