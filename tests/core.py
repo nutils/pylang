@@ -54,9 +54,14 @@ def eval_expression(expression):
     return mod.test()
 
 
-def compare(dtype, op, *args):
+def compare(dtype, op, *args, tol=None):
 
-    return op(*args) == eval_expression(op(*map(dtype, args)))
+    a = op(*args)
+    b = eval_expression(op(*map(dtype, args)))
+    if tol and a != 0:
+        return abs(a-b) < tol*abs(a)
+    else:
+        return a == b
 
 
 class TestSignedIntegerArithmetic(unittest.TestCase):
@@ -162,6 +167,70 @@ class TestUnsignedIntegerArithmetic(unittest.TestCase):
             self.assertTrue(compare(dtype, operator_rtzdiv, 2, 3))
             self.assertTrue(compare(dtype, operator_rtzdiv, 3, 3))
             self.assertTrue(compare(dtype, operator_rtzdiv, 7, 3))
+
+
+class TestFloatArithmetic(unittest.TestCase):
+
+    dtypes = (pylang.core.float32_t, 2**-23), (pylang.core.float64_t, 2**-52)
+
+    def test_neg(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator.neg, 2, tol=tol))
+
+    def test_add(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator.add, 2, 3, tol=tol))
+
+    def test_sub(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator.sub, 3, 2, tol=tol))
+
+    def test_mul(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator.mul, 2, 3, tol=tol))
+
+    def test_truediv(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator.truediv, 2, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, 3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, 7, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, -1, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, -3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, -1, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, -3, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, 1, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator.truediv, 3, -3, tol=tol))
+
+    def test_floordiv(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator.floordiv, 2, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, 3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, 7, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, -1, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, -3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, -1, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, -3, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, 1, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator.floordiv, 3, -3, tol=tol))
+
+    def test_rtzdiv(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator_rtzdiv, 2, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, 3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, 7, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, -1, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, -3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, -1, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, -3, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, 1, -3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzdiv, 3, -3, tol=tol))
 
 
 # vim: ts=4:sts=4:sw=4:et

@@ -1102,6 +1102,10 @@ class Module:
             float32_t)
         self.declare_function('llvm.copysign.f64', float64_t, float64_t,
             float64_t)
+        self.declare_function('llvm.floor.f32', float32_t, float32_t)
+        self.declare_function('llvm.floor.f64', float64_t, float64_t)
+        self.declare_function('llvm.ceil.f32', float32_t, float32_t)
+        self.declare_function('llvm.ceil.f64', float64_t, float64_t)
 
     @staticmethod
     def _generate_function_type_header(name, return_dtype, arg_dtypes,
@@ -1238,6 +1242,8 @@ ge = MultipleDispatchFunction(2)
 eq = MultipleDispatchFunction(2)
 ne = MultipleDispatchFunction(2)
 abs_ = MultipleDispatchFunction(1)
+floor = MultipleDispatchFunction(1)
+ceil = MultipleDispatchFunction(1)
 copysign = MultipleDispatchFunction(2)
 
 
@@ -1372,6 +1378,58 @@ def _operator(value):
                 _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
             (value,))
 
+@floor.register
+def _operator(value):
+    if not isinstance(value, Expression):
+        return NotImplemented
+    elif isinstance(value.dtype, UnsignedIntegerType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, UnsignedIntegerType):
+        return value
+    elif isinstance(value.dtype, SignedIntegerType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, SignedIntegerType):
+        return value
+    elif isinstance(value.dtype, FloatType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, FloatType):
+        if isinstance(value.dtype, VectorType):
+            d = value.dtype._element_dtype
+        else:
+            d = value.dtype
+        f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
+        return RHSExpression(
+            value.dtype,
+            lambda _value: 'call {} @llvm.floor.{}({})'.format(
+                _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
+            (value,))
+
+@ceil.register
+def _operator(value):
+    if not isinstance(value, Expression):
+        return NotImplemented
+    elif isinstance(value.dtype, UnsignedIntegerType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, UnsignedIntegerType):
+        return value
+    elif isinstance(value.dtype, SignedIntegerType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, SignedIntegerType):
+        return value
+    elif isinstance(value.dtype, FloatType) \
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, FloatType):
+        if isinstance(value.dtype, VectorType):
+            d = value.dtype._element_dtype
+        else:
+            d = value.dtype
+        f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
+        return RHSExpression(
+            value.dtype,
+            lambda _value: 'call {} @llvm.ceil.{}({})'.format(
+                _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
+            (value,))
+
 @copysign.register
 def _operator(l, r):
     if isinstance(l, Expression) and isinstance(l.dtype, FloatType):
@@ -1401,6 +1459,34 @@ def _operator(l, r):
         lambda _l, _r: 'call {} @llvm.copysign.{}({}, {})'.format(
             _l.dtype._llvm_id, f_type, _l._llvm_ty_val, _r._llvm_ty_val),
         (l, r))
+
+@floordiv.register
+def _operator(l, r):
+    value = truediv._operator_call(l, r)
+    if value is NotImplemented:
+        return NotImplemented
+    elif isinstance(value.dtype, FloatType):
+        el_dtype = value.dtype
+    elif isinstance(value.dtype, VectorType) and \
+            isinstance(value.dtype._element_dtype, FloatType):
+        el_dtype = value._element_dtype.dtype
+    else:
+        return NotImplemented
+    return floor(value)
+
+@rtzdiv.register
+def _operator(l, r):
+    value = truediv._operator_call(l, r)
+    if value is NotImplemented:
+        return NotImplemented
+    elif isinstance(value.dtype, FloatType):
+        el_dtype = value.dtype
+    elif isinstance(value.dtype, VectorType) and \
+            isinstance(value.dtype._element_dtype, FloatType):
+        el_dtype = value._element_dtype.dtype
+    else:
+        return NotImplemented
+    return Select(ge(value, 0), floor(value), ceil(value))
 
 @SignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
