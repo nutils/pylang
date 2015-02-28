@@ -44,6 +44,21 @@ def operator_rtzdiv(l, r):
         return sign*(abs(l)//abs(r))
 
 
+def operator_rtzmod(l, r):
+
+    if isinstance(l, pylang.core.Expression):
+        assert isinstance(r, pylang.core.Expression)
+        value = pylang.core.rtzmod._operator_call(l, r)
+        if value == NotImplemented:
+            raise TypeError
+        else:
+            return value
+    else:
+        assert not isinstance(r, pylang.core.Expression)
+        sign = 1 if l >= 0 else -1
+        return sign*(abs(l)%abs(r))
+
+
 def eval_expression(expression):
 
     module = pylang.core.Module()
@@ -121,6 +136,36 @@ class TestSignedIntegerArithmetic(unittest.TestCase):
             self.assertTrue(compare(dtype, operator_rtzdiv, 1, -3))
             self.assertTrue(compare(dtype, operator_rtzdiv, 3, -3))
 
+    def test_mod(self):
+
+        for dtype in self.dtypes:
+            self.assertTrue(compare(dtype, operator.mod, 2, 3))
+            self.assertTrue(compare(dtype, operator.mod, 3, 3))
+            self.assertTrue(compare(dtype, operator.mod, 7, 3))
+            self.assertTrue(compare(dtype, operator.mod, -1, 3))
+            self.assertTrue(compare(dtype, operator.mod, -3, 3))
+            self.assertTrue(compare(dtype, operator.mod, -1, -3))
+            self.assertTrue(compare(dtype, operator.mod, -3, -3))
+            self.assertTrue(compare(dtype, operator.mod, 1, -3))
+            self.assertTrue(compare(dtype, operator.mod, 3, -3))
+            self.assertTrue(compare(dtype, operator.mod, 0, 3))
+            self.assertTrue(compare(dtype, operator.mod, 0, -3))
+
+    def test_rtzmod(self):
+
+        for dtype in self.dtypes:
+            self.assertTrue(compare(dtype, operator_rtzmod, 2, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 3, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 7, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, -1, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, -3, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, -1, -3))
+            self.assertTrue(compare(dtype, operator_rtzmod, -3, -3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 1, -3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 3, -3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 0, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 0, -3))
+
 
 class TestUnsignedIntegerArithmetic(unittest.TestCase):
 
@@ -167,6 +212,22 @@ class TestUnsignedIntegerArithmetic(unittest.TestCase):
             self.assertTrue(compare(dtype, operator_rtzdiv, 2, 3))
             self.assertTrue(compare(dtype, operator_rtzdiv, 3, 3))
             self.assertTrue(compare(dtype, operator_rtzdiv, 7, 3))
+
+    def test_mod(self):
+
+        for dtype in self.dtypes:
+            self.assertTrue(compare(dtype, operator.mod, 2, 3))
+            self.assertTrue(compare(dtype, operator.mod, 3, 3))
+            self.assertTrue(compare(dtype, operator.mod, 7, 3))
+            self.assertTrue(compare(dtype, operator.mod, 0, 3))
+
+    def test_rtzmod(self):
+
+        for dtype in self.dtypes:
+            self.assertTrue(compare(dtype, operator_rtzmod, 2, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 3, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 7, 3))
+            self.assertTrue(compare(dtype, operator_rtzmod, 0, 3))
 
 
 class TestFloatArithmetic(unittest.TestCase):
@@ -231,6 +292,22 @@ class TestFloatArithmetic(unittest.TestCase):
             self.assertTrue(compare(dtype, operator_rtzdiv, -3, -3, tol=tol))
             self.assertTrue(compare(dtype, operator_rtzdiv, 1, -3, tol=tol))
             self.assertTrue(compare(dtype, operator_rtzdiv, 3, -3, tol=tol))
+
+    def test_mod(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator.mod, 2, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.mod, 3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.mod, 7, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator.mod, 0, 3, tol=tol))
+
+    def test_rtzmod(self):
+
+        for dtype, tol in self.dtypes:
+            self.assertTrue(compare(dtype, operator_rtzmod, 2, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzmod, 3, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzmod, 7, 3, tol=tol))
+            self.assertTrue(compare(dtype, operator_rtzmod, 0, 3, tol=tol))
 
 
 # vim: ts=4:sts=4:sw=4:et

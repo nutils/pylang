@@ -529,6 +529,8 @@ class Expression:
     def __rtruediv__ (r, l): return truediv._operator_call(l, r)
     def __floordiv__ (l, r): return floordiv._operator_call(l, r)
     def __rfloordiv__(r, l): return floordiv._operator_call(l, r)
+    def __mod__      (l, r): return mod._operator_call(l, r)
+    def __rmod__     (r, l): return mod._operator_call(l, r)
 
 
 class ForceDtype(Expression):
@@ -1235,6 +1237,8 @@ mul = MultipleDispatchFunction(2)
 truediv = MultipleDispatchFunction(2)
 floordiv = MultipleDispatchFunction(2)
 rtzdiv = MultipleDispatchFunction(2)
+mod = MultipleDispatchFunction(2)
+rtzmod = MultipleDispatchFunction(2)
 lt = MultipleDispatchFunction(2)
 le = MultipleDispatchFunction(2)
 gt = MultipleDispatchFunction(2)
@@ -1308,8 +1312,12 @@ rtzdiv.register(_gen_bin_op(SignedIntegerType, numbers.Integral, 'sdiv'))
 rtzdiv.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'udiv'))
 floordiv.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'udiv'))
 
+rtzmod.register(_gen_bin_op(SignedIntegerType, numbers.Integral, 'srem'))
+rtzmod.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'urem'))
+mod.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'urem'))
+
 for _op, _llvm_op in ((add, 'fadd'), (sub, 'fsub'), (mul, 'fmul'),
-        (truediv, 'fdiv')):
+        (truediv, 'fdiv'), (mod, 'frem')):
     _op.register(_gen_bin_op(FloatType, numbers.Real, _llvm_op))
 # TODO: support the unordered comparisons?
 #       see http://llvm.org/docs/LangRef.html#fcmp-instruction
@@ -1341,6 +1349,30 @@ def _operator(l, r):
     return Select(ge(l*r, 0), rtzdiv(l, r),
         Select(ge(l, 0), rtzdiv(l-1, r)-1, rtzdiv(l+1, r)-1))
 
+@mod.register
+def _operator(l, r):
+    if isinstance(l, Expression) and isinstance(l.dtype, SignedIntegerType):
+        if isinstance(r, Expression) and l.dtype == r.dtype:
+            pass
+        elif isinstance(r, py_dtype):
+            r = l.dtype(r)
+        else:
+            return NotImplemented
+    elif isinstance(r, Expression) and isinstance(r.dtype, SignedIntegerType) \
+            and isinstance(l, py_dtype):
+        l = r.dtype(l)
+    elif isinstance(l, Expression) and isinstance(r, Expression) \
+            and isinstance(l.dtype, VectorType) \
+            and isinstance(l.dtype._element_dtype, SignedIntegerType) \
+            and r.dtype == l.dtype:
+        if return_dtype is not None:
+            return_dtype = VectorType(return_dtype)
+    else:
+        return NotImplemented
+    return Select(ge(r, 0),
+        Select(ge(l, 0), rtzmod(l, r), rtzmod(r-rtzmod(-l, r), r)),
+        Select(ge(l, 0), -rtzmod(-r-rtzmod(l, -r), -r), -rtzmod(-l, -r)))
+
 @neg.register
 def _neg_custom(value):
     if isinstance(value, Expression) and \
@@ -1351,6 +1383,27 @@ def _neg_custom(value):
         return 0-value
     else:
         return NotImplemented
+
+@rtzmod.register
+def _operator(l, r):
+    if isinstance(l, Expression) and isinstance(l.dtype, FloatType):
+        if isinstance(r, Expression) and l.dtype == r.dtype:
+            pass
+        elif isinstance(r, py_dtype):
+            r = l.dtype(r)
+        else:
+            return NotImplemented
+    elif isinstance(r, Expression) and isinstance(r.dtype, FloatType) \
+            and isinstance(l, py_dtype):
+        l = r.dtype(l)
+    elif isinstance(l, Expression) and isinstance(r, Expression) \
+            and isinstance(l.dtype, VectorType) \
+            and isinstance(l.dtype._element_dtype, FloatType) \
+            and r.dtype == l.dtype:
+        pass
+    else:
+        return NotImplemented
+    return copysign(abs(l)%abs(r), l)
 
 @abs_.register
 def _operator(value):
