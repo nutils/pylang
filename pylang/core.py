@@ -1098,6 +1098,10 @@ class Module:
 
         self.declare_function('llvm.fabs.f32', float32_t, float32_t)
         self.declare_function('llvm.fabs.f64', float64_t, float64_t)
+        self.declare_function('llvm.copysign.f32', float32_t, float32_t,
+            float32_t)
+        self.declare_function('llvm.copysign.f64', float64_t, float64_t,
+            float64_t)
 
     @staticmethod
     def _generate_function_type_header(name, return_dtype, arg_dtypes,
@@ -1234,6 +1238,7 @@ ge = MultipleDispatchFunction(2)
 eq = MultipleDispatchFunction(2)
 ne = MultipleDispatchFunction(2)
 abs_ = MultipleDispatchFunction(1)
+copysign = MultipleDispatchFunction(2)
 
 
 
@@ -1366,6 +1371,36 @@ def _operator(value):
             lambda _value: 'call {} @llvm.fabs.{}({})'.format(
                 _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
             (value,))
+
+@copysign.register
+def _operator(l, r):
+    if isinstance(l, Expression) and isinstance(l.dtype, FloatType):
+        if isinstance(r, Expression) and l.dtype == r.dtype:
+            pass
+        elif isinstance(r, py_dtype):
+            r = l.dtype(r)
+        else:
+            return NotImplemented
+    elif isinstance(r, Expression) and isinstance(r.dtype, FloatType) \
+            and isinstance(l, py_dtype):
+        l = r.dtype(l)
+    elif isinstance(l, Expression) and isinstance(r, Expression) \
+            and isinstance(l.dtype, VectorType) \
+            and isinstance(l.dtype._element_dtype, FloatType) \
+            and r.dtype == l.dtype:
+        pass
+    else:
+        return NotImplemented
+    if isinstance(l.dtype, VectorType):
+        d = l.dtype._element_dtype
+    else:
+        d = l.dtype
+    f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
+    return RHSExpression(
+        l.dtype,
+        lambda _l, _r: 'call {} @llvm.copysign.{}({}, {})'.format(
+            _l.dtype._llvm_id, f_type, _l._llvm_ty_val, _r._llvm_ty_val),
+        (l, r))
 
 @SignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
