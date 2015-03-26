@@ -113,28 +113,79 @@ class VoidType(TypeBase):
         return ()
 
 
+class TypeAttributesTuple:
+
+    def __new__(cls, value):
+
+        if isinstance(value, cls):
+            return value
+
+        self = super().__new__(cls)
+        if isinstance(value, TypeBase):
+            self.dtype = value
+            self.attributes = frozenset()
+        else:
+            self.dtype, *self.attributes = value
+            self.attributes = frozenset(self.attributes)
+            assert isinstance(self.dtype, TypeBase)
+            assert all(isinstance(a, str) for a in self.attributes)
+        return self
+
+    def __eq__(self, other):
+
+        return self.__class__ == other.__class__ \
+            and self.dtype == other.dtype \
+            and self.attributes == other.attributes
+
+    def __hash__(self):
+
+        return hash((self.dtype, self.attributes))
+
+    def filter_attributes(self, whitelist):
+
+        return TypeAttributesTuple(
+            (self.dtype,)+tuple(self.attributes&whitelist))
+
+
 class FunctionType(TypeBase):
 
-    def __new__(cls, return_dtype, arguments_dtypes, variable_arguments):
+    # TODO: add `returns_twice` to `_function_attributes`?
+    _allowed_function_attributes = frozenset(('noreturn', 'nounwind',
+        'readnone', 'readonly'))
+    _allowed_parameter_attributes = frozenset(('readnone', 'readonly',
+        'noalias', 'nocapture', 'nonnull'))
+    _allowed_return_attributes = frozenset(('noalias', 'nonnull'))
 
-        arguments_dtypes = tuple(arguments_dtypes)
+    def __new__(cls, return_value, parameters, variable_arguments,
+            function_attributes):
+
+        return_value = TypeAttributesTuple(return_value).filter_attributes(
+            cls._allowed_return_attributes)
+        parameters = tuple(
+            TypeAttributesTuple(parameter).filter_attributes(
+                cls._allowed_parameter_attributes)
+            for parameter in parameters)
         variable_arguments = bool(variable_arguments)
+        function_attributes = \
+            frozenset(function_attributes)&cls._allowed_function_attributes
 
-        arg_ids = [dtype._llvm_id for dtype in arguments_dtypes]
+        param_ids = [p.dtype._llvm_id for p in parameters]
         if variable_arguments:
-            arg_ids.append('...')
-        llvm_id = '{} ({})'.format(return_dtype._llvm_id, ', '.join(arg_ids))
+            param_ids.append('...')
+        llvm_id = '{} ({})'.format(
+            return_value.dtype._llvm_id, ', '.join(param_ids))
 
         self = super().__new__(cls, llvm_id)
-        self._return_dtype = return_dtype
-        self._arguments_dtypes = arguments_dtypes
+        self._return_value = return_value
+        self._parameters = parameters
         self._variable_arguments = variable_arguments
+        self._function_attributes = function_attributes
         return self
 
     def __getnewargs__(self):
 
-        return self._return_dtype, self._arguments_dtypes, \
-            self._variable_arguments
+        return self._return_value, self._parameters, self._variable_arguments,\
+            self._function_attributes
 
 
 class FirstClassType(TypeBase):
@@ -892,13 +943,14 @@ class BasicBlock:
 
     def ret(self, value=None):
 
-        if self._function_dtype._return_dtype == void_t:
+        if self._function_dtype._return_value.dtype == void_t:
             assert value is None
             self._append_statement('  ret void')
         else:
             assert value is not None
             self._append_statement('  ret {} {}'.format(
-                self._function_dtype._return_dtype._llvm_id, value._llvm_id))
+                self._function_dtype._return_value.dtype._llvm_id,
+                value._llvm_id))
         self._finalised = True
 
     def call(self, function_ptr, *args):
@@ -912,25 +964,26 @@ class BasicBlock:
 
         if function_dtype._variable_arguments:
             function_type = function_dtype._llvm_id+'*'
-            assert len(args) >= len(function_dtype._arguments_dtypes)
+            assert len(args) >= len(function_dtype._parameters)
         else:
-            function_type = function_dtype._return_dtype._llvm_id
-            assert len(args) == len(function_dtype._arguments_dtypes)
+            function_type = function_dtype._return_value.dtype._llvm_id
+            assert len(args) == len(function_dtype._parameters)
 
         assert all(isinstance(arg, LLVMIdentifier) for arg in args)
-        for arg, dtype in zip(args, function_dtype._arguments_dtypes):
-            assert arg.dtype == dtype
+        for arg, parameter in zip(args, function_dtype._parameters):
+            assert arg.dtype == parameter.dtype
 
         args = ', '.join(
             '{} {}'.format(arg.dtype._llvm_id, arg._llvm_id)
             for arg in args)
         statement = 'call {} {}({})'.format(
             function_type, function_ptr._llvm_id, args)
-        if function_dtype._return_dtype == void_t:
+        if function_dtype._return_value.dtype == void_t:
             result_var = None
             statement = '  {}'.format(statement)
         else:
-            result_var = self._reserve_variable(function_dtype._return_dtype)
+            result_var = self._reserve_variable(
+                function_dtype._return_value.dtype)
             statement = '  {} = {}'.format(result_var._llvm_id, statement)
         self._append_statement(statement)
         return result_var
@@ -1035,12 +1088,13 @@ class ExtendedBlock:
 
     def ret(self, expression=None):
 
-        if self._head._function_dtype._return_dtype == void_t:
+        if self._head._function_dtype._return_value.dtype == void_t:
             assert expression is None
             self._tail.ret()
         else:
             assert expression is not None
-            expression = self._head._function_dtype._return_dtype(expression)
+            expression = self._head._function_dtype._return_value.dtype(
+                expression)
             expression = self.eval(expression)
             self._tail.ret(expression)
 
@@ -1055,14 +1109,14 @@ class ExtendedBlock:
 
         if function_dtype._variable_arguments:
             function_type = function_dtype._llvm_id
-            assert len(args) >= len(function_dtype._arguments_dtypes)
+            assert len(args) >= len(function_dtype._parameters)
         else:
-            function_type = function_dtype._return_dtype._llvm_id
-            assert len(args) == len(function_dtype._arguments_dtypes)
+            function_type = function_dtype._return_value.dtype._llvm_id
+            assert len(args) == len(function_dtype._parameters)
 
         args = list(args)
-        for i in range(len(function_dtype._arguments_dtypes)):
-            args[i] = function_dtype._arguments_dtypes[i](args[i])
+        for i in range(len(function_dtype._parameters)):
+            args[i] = function_dtype._parameters[i].dtype(args[i])
 
         return self._tail.call(function_ptr, *self.eval(args))
 
@@ -1110,45 +1164,45 @@ class Module:
         self.declare_function('llvm.ceil.f64', float64_t, float64_t)
 
     @staticmethod
-    def _generate_function_type_header(name, return_dtype, arg_dtypes,
+    def _generate_function_type_header(name, return_value, parameters,
             function_attributes, with_arg_expressions):
 
-        if isinstance(return_dtype, (tuple, list)):
-            return_dtype, *return_attributes = return_dtype
-        else:
-            return_attributes = ()
-        return_id = ' '.join(list(return_attributes)+[return_dtype._llvm_id])
-
-        if len(arg_dtypes) > 0 and arg_dtypes[-1] == ...:
-            arg_dtypes = arg_dtypes[:-1]
+        if parameters and parameters[-1] == ...:
             variable_arguments = True
+            parameters = parameters[:-1]
         else:
             variable_arguments = False
 
-        arg_ids, arg_dtypes, _arg_dtypes = [], [], arg_dtypes
+        return_value = TypeAttributesTuple(return_value)
+        parameters = tuple(map(TypeAttributesTuple, parameters))
+        function_attributes = frozenset(function_attributes)
+
+        dtype = FunctionType(return_value, parameters, variable_arguments,
+            function_attributes)
+
+        return_id = ' '.join(itertools.chain(
+            sorted(return_value.attributes), (return_value.dtype._llvm_id,)))
+
+        arg_ids = []
         arg_expressions = []
-        for i, dtype in enumerate(_arg_dtypes):
-            if isinstance(dtype, (tuple, list)):
-                dtype, *attributes = dtype
-            else:
-                attributes = ()
-            arg_dtypes.append(dtype)
+        for i, parameter in enumerate(parameters):
+            parts = [parameter.dtype._llvm_id]
+            parts.extend(sorted(parameter.attributes))
             if with_arg_expressions:
                 arg_expression = \
-                    LLVMIdentifier('%__arg_{:04d}'.format(i), dtype)
-                attributes += arg_expression._llvm_id,
+                    LLVMIdentifier('%__arg_{:04d}'.format(i), parameter.dtype)
+                parts.append(arg_expression._llvm_id)
                 arg_expressions.append(arg_expression)
-            arg_ids.append(' '.join([dtype._llvm_id]+list(attributes)))
+            arg_ids.append(' '.join(parts))
         if variable_arguments:
             arg_ids.append('...')
 
-        function_attributes = ' '+' '.join(function_attributes)
+        function_attributes = ' '+' '.join(sorted(function_attributes))
         if function_attributes == ' ':
             function_attributes = ''
 
         header = '{} @{}({}){}'.format(return_id, name, ', '.join(arg_ids),
             function_attributes)
-        dtype = FunctionType(return_dtype, arg_dtypes, variable_arguments)
         function = LLVMIdentifier('@'+name, dtype.pointer)
         if with_arg_expressions:
             return (function, dtype, header)+tuple(arg_expressions)

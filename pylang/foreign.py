@@ -61,11 +61,11 @@ def define_cplusplus_functions(module, function_names_dtypes, source, *,
     function_pointers = []
     for name, dtype in function_names_dtypes:
         # TODO: add return value, argument and function attributes from `ir`
-        args = tuple(dtype._arguments_dtypes)
+        args = tuple(dtype._parameters)
         if dtype._variable_arguments:
             args += ...,
         function_pointers.append(
-            module.declare_function(name, dtype._return_dtype, *args))
+            module.declare_function(name, dtype._return_value, *args))
     return tuple(function_pointers)
 
 

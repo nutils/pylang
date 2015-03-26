@@ -47,12 +47,12 @@ def _equivalent_c_dtype(dtype, typedefs):
         else:
             name = '__pylang_typedef_{:04d}'.format(len(typedefs))
             arg_dtypes = [
-                _equivalent_c_dtype(d, typedefs)
-                for d in dtype._arguments_dtypes]
+                _equivalent_c_dtype(parameter.dtype, typedefs)
+                for parameter in dtype._parameters]
             name = '__pylang_typedef_{:04d}'.format(len(typedefs))
             typedefs[dtype] = name, \
                 'typedef {} {}({});'.format(
-                    _equivalent_c_dtype(dtype._return_dtype, typedefs),
+                    _equivalent_c_dtype(dtype._return_value.dtype, typedefs),
                     name,
                     ', '.join(arg_dtypes))
             return name
@@ -109,10 +109,10 @@ def compile_and_load(module):
                 continue
             dtype = function.dtype.reference_dtype
             function_cdefs.append('{} {}({});'.format(
-                eq_c_dtype(dtype._return_dtype),
+                eq_c_dtype(dtype._return_value.dtype),
                 name,
                 ', '.join(itertools.chain(
-                    map(eq_c_dtype, dtype._arguments_dtypes),
+                    (eq_c_dtype(p.dtype) for p in dtype._parameters),
                     ('...',) if dtype._variable_arguments else ()))))
         ffi.cdef('\n'.join(itertools.chain(
             (typedef for name, typedef in typedefs.values()),

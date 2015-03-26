@@ -247,7 +247,7 @@ def test_fib_cplusplus(n):
 
     fib, = foreign.define_cplusplus_functions(
         module,
-        [['fib', FunctionType(int32_t, (int32_t,), False)]],
+        [['fib', FunctionType(int32_t, (int32_t,), False, ())]],
         '''
             #include <stdint.h>
             extern "C" int32_t fib(int32_t n)
