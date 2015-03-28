@@ -310,4 +310,38 @@ class TestFloatArithmetic(unittest.TestCase):
             self.assertTrue(compare(dtype, operator_rtzmod, 0, 3, tol=tol))
 
 
+class TestFunctionCall(unittest.TestCase):
+
+    def test_nonconst_inline_function_call(self):
+
+        module = pylang.core.Module()
+        func, entry, arg = module.define_function('func', pylang.core.int32_t,
+            pylang.core.int32_t)
+        entry.ret(arg+1)
+
+        test, entry = module.define_function('test', pylang.core.int32_t)
+        with self.assertRaises(ValueError):
+            entry.eval(func(1))
+
+    def test_readnone_inline_function_call(self):
+
+        module = pylang.core.Module()
+        func, entry, arg = module.define_function('func', pylang.core.int32_t,
+            pylang.core.int32_t, function_attributes=['readnone'])
+        entry.ret(arg+1)
+
+        test, entry = module.define_function('test', pylang.core.int32_t)
+        entry.eval(func(1))
+
+    def test_readonly_inline_function_call(self):
+
+        module = pylang.core.Module()
+        func, entry, arg = module.define_function('func', pylang.core.int32_t,
+            pylang.core.int32_t, function_attributes=['readonly'])
+        entry.ret(arg+1)
+
+        test, entry = module.define_function('test', pylang.core.int32_t)
+        entry.eval(func(1))
+
+
 # vim: ts=4:sts=4:sw=4:et

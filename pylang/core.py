@@ -250,7 +250,11 @@ class PointerType(FirstClassType):
 
         if isinstance(self.reference_dtype, FunctionType):
             assert not kwargs
-            return FunctionCall(expression, args)
+            if self.reference_dtype._function_attributes\
+                    &frozenset(('readnone', 'readonly')):
+                return ConstFunctionCall(expression, args)
+            else:
+                return FunctionCall(expression, args)
         else:
             return super()._expresion_call(expression, args, kwargs)
 
@@ -906,6 +910,26 @@ class FunctionCall(FunctionCallBase):
         self._function_dtype = func_dtype
         self._children = (function_pointer,)+args
         return self
+
+
+class ConstFunctionCall(Expression, FunctionCallBase):
+
+    def __new__(cls, function_pointer, args):
+
+        func_dtype = function_pointer.dtype.reference_dtype
+        children = [function_pointer]
+        dtypes = itertools.chain(
+            (param.dtype for param in func_dtype._parameters),
+            itertools.cycle([lambda e: e]))
+        children.extend(dtype(arg) for arg, dtype in zip(args, dtypes))
+
+        self = super().__new__(cls, func_dtype._return_value.dtype, children)
+        self._function_dtype = func_dtype
+        return self
+
+    def _eval(self, bb, *children):
+
+        return bb, self._generate_call_statement(bb, *children)
 
 
 class BasicBlock:
