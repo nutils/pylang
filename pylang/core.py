@@ -246,6 +246,14 @@ class PointerType(FirstClassType):
 
         return DereferencePointer(GetElementPointer(expression, index, self))
 
+    def _expression_call(self, expression, args, kwargs):
+
+        if isinstance(self.reference_dtype, FunctionType):
+            assert not kwargs
+            return FunctionCall(expression, args)
+        else:
+            return super()._expresion_call(expression, args, kwargs)
+
 
 class VectorType(FirstClassType):
 
@@ -554,6 +562,11 @@ class Expression:
 
         return self.dtype._expression_getitem(self, index)
 
+    def __call__(*args, **kwargs):
+
+        self, *args = args
+        return self.dtype._expression_call(self, args, kwargs)
+
     def __neg__(self):
 
         value = neg._operator_call(self)
@@ -853,6 +866,48 @@ class DereferencePointer(Expression):
         return bb, result
 
 
+class FunctionCallBase:
+
+    def _generate_call_statement(self, bb, *children):
+
+        function_pointer, *args = children
+        if self._function_dtype._variable_arguments:
+            function_type = self._function_dtype._llvm_id+'*'
+            assert len(args) >= len(self._function_dtype._parameters)
+        else:
+            function_type = self._function_dtype._return_value.dtype._llvm_id
+            assert len(args) == len(self._function_dtype._parameters)
+
+        return_dtype = self._function_dtype._return_value.dtype
+        if return_dtype == void_t:
+            result_var = None
+            prefix = '  '
+        else:
+            result_var = bb._reserve_variable(return_dtype)
+            prefix = '  {} = '.format(result_var._llvm_id)
+
+        bb._append_statement('{}call {} {}({})'.format(
+            prefix, function_type, function_pointer._llvm_id,
+            ', '.join(arg._llvm_ty_val for arg in args)))
+        return result_var
+
+
+class FunctionCall(FunctionCallBase):
+
+    def __new__(cls, function_pointer, args):
+
+        func_dtype = function_pointer.dtype.reference_dtype
+        dtypes = itertools.chain(
+            (param.dtype for param in func_dtype._parameters),
+            itertools.cycle([lambda e: e]))
+        args = tuple(dtype(arg) for arg, dtype in zip(args, dtypes))
+
+        self = super().__new__(cls)
+        self._function_dtype = func_dtype
+        self._children = (function_pointer,)+args
+        return self
+
+
 class BasicBlock:
 
     def __init__(self, label, function_dtype, function_basic_blocks,
@@ -953,40 +1008,17 @@ class BasicBlock:
                 value._llvm_id))
         self._finalised = True
 
-    def call(self, function_ptr, *args):
+    def call(*args, **kwargs):
 
-        if isinstance(function_ptr, str):
-            function_ptr = self._module._functions[function_ptr]
+        self, function, *args = args
 
-        assert isinstance(function_ptr.dtype, PointerType) \
-            and isinstance(function_ptr.dtype.reference_dtype, FunctionType)
-        function_dtype = function_ptr.dtype.reference_dtype
+        if isinstance(function, str):
+            function = self._module._functions[function]
 
-        if function_dtype._variable_arguments:
-            function_type = function_dtype._llvm_id+'*'
-            assert len(args) >= len(function_dtype._parameters)
-        else:
-            function_type = function_dtype._return_value.dtype._llvm_id
-            assert len(args) == len(function_dtype._parameters)
-
-        assert all(isinstance(arg, LLVMIdentifier) for arg in args)
-        for arg, parameter in zip(args, function_dtype._parameters):
-            assert arg.dtype == parameter.dtype
-
-        args = ', '.join(
-            '{} {}'.format(arg.dtype._llvm_id, arg._llvm_id)
-            for arg in args)
-        statement = 'call {} {}({})'.format(
-            function_type, function_ptr._llvm_id, args)
-        if function_dtype._return_value.dtype == void_t:
-            result_var = None
-            statement = '  {}'.format(statement)
-        else:
-            result_var = self._reserve_variable(
-                function_dtype._return_value.dtype)
-            statement = '  {} = {}'.format(result_var._llvm_id, statement)
-        self._append_statement(statement)
-        return result_var
+        func_call = function(*args, **kwargs)
+        assert isinstance(func_call, FunctionCallBase)
+        assert all(isinstance(child, LLVMIdentifier) for child in func_call._children)
+        return func_call._generate_call_statement(self, *func_call._children)
 
     def allocate_stack(self, dtype, n_elements=1):
 
@@ -1103,27 +1135,17 @@ class ExtendedBlock:
             expression = self.eval(expression)
             self._tail.ret(expression)
 
-    def call(self, function_ptr, *args):
+    def call(*args, **kwargs):
 
-        if isinstance(function_ptr, str):
-            function_ptr = self._module._functions[function_ptr]
+        self, function, *args = args
 
-        assert isinstance(function_ptr.dtype, PointerType) \
-            and isinstance(function_ptr.dtype.reference_dtype, FunctionType)
-        function_dtype = function_ptr.dtype.reference_dtype
+        if isinstance(function, str):
+            function = self._module._functions[function]
 
-        if function_dtype._variable_arguments:
-            function_type = function_dtype._llvm_id
-            assert len(args) >= len(function_dtype._parameters)
-        else:
-            function_type = function_dtype._return_value.dtype._llvm_id
-            assert len(args) == len(function_dtype._parameters)
-
-        args = list(args)
-        for i in range(len(function_dtype._parameters)):
-            args[i] = function_dtype._parameters[i].dtype(args[i])
-
-        return self._tail.call(function_ptr, *self.eval(args))
+        func_call = function(*args, **kwargs)
+        assert isinstance(func_call, FunctionCallBase)
+        children = self.eval(func_call._children)
+        return func_call._generate_call_statement(self._tail, *children)
 
     def allocate_stack(self, dtype, n_elements=1):
 
