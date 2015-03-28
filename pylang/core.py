@@ -1045,10 +1045,15 @@ class ExtendedBlock:
         if isinstance(expression, (tuple, list)):
             values = []
             for expression in expression:
+                if not isinstance(expression, Expression):
+                    raise ValueError(
+                        'not an expression: {!r}'.format(expression))
                 self._tail, value = expression._eval_tree(self._tail, cache)
                 values.append(value)
             return values
         else:
+            if not isinstance(expression, Expression):
+                raise ValueError('not an expression: {!r}'.format(expression))
             self._tail, value = expression._eval_tree(self._tail, cache)
             return value
 
