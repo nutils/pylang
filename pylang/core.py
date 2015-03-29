@@ -201,14 +201,17 @@ class FirstClassType(TypeBase):
 
     def bitcast(self, value):
 
-        if value.dtype == self:
+        if not isinstance(value, Expression):
+            raise ValueError('Cannot bitcast {!r} to {!r}'.format(value, self))
+        elif value.dtype == self:
             return value
-        assert isinstance(value.dtype, FirstClassType)
-        return RHSExpression(
-            self,
-            lambda _value: 'bitcast {} to {}'.format(
-                _value._llvm_ty_val, self._llvm_id),
-            (value,))
+        elif isinstance(value.dtype, FirstClassType):
+            return FormatExpression(self, 'bitcast {0:dtype} {0} to {dtype}',
+                (value,))
+        else:
+            raise ValueError(
+                'Can only bitcast first class types, not {!r}'.format(
+                    value.dtype))
 
 
 class PrimitiveType(FirstClassType):
@@ -643,20 +646,42 @@ class ForceDtype(Expression):
         return bb, LLVMIdentifier(expression._llvm_id, self.dtype)
 
 
-class RHSExpression(Expression):
+class FormatExpressionArg:
 
-    def __new__(cls, dtype, rhs_generator, args):
+    def __new__(cls, arg):
 
-        self = super().__new__(cls, dtype, args)
-        self._rhs_generator = rhs_generator
+        self = super().__new__(cls)
+        self.arg = arg
+        return self
+
+    def __str__(self):
+
+        return self.arg._llvm_id
+
+    def __format__(self, fmt):
+
+        if fmt == '':
+            return self.arg._llvm_id
+        elif fmt == 'dtype':
+            return self.arg.dtype._llvm_id
+        else:
+            raise ValueError('Invalid format specifier')
+
+
+class FormatExpression(Expression):
+
+    def __new__(cls, dtype, expression_fmt, children):
+
+        self = super().__new__(cls, dtype, children)
+        self._expression_fmt = expression_fmt
         return self
 
     def _eval(self, bb, *args):
 
-        result = bb._reserve_variable(self.dtype)
-        bb._append_statement('  {} = {}'.format(
-            result._llvm_id, self._rhs_generator(*args)))
-        return bb, result
+        expression_args = map(FormatExpressionArg, args)
+        kwargs = {'dtype': self.dtype._llvm_id}
+        expression = self._expression_fmt.format(*expression_args, **kwargs)
+        return bb, bb._append_rhs_statement(self.dtype, expression)
 
 
 class LLVMIdentifier(Expression):
@@ -702,28 +727,21 @@ class PhiNode(LLVMIdentifier):
             self._values.append((value._llvm_id, basic_block))
 
 
-class Select(Expression):
+def Select(condition, value_true, value_false):
 
-    def __new__(cls, condition, value_true, value_false):
+    value_true, value_false = _convert_python_numbers(value_true, value_false)
+    assert int1_t.test_dtype_or_vector(condition)
+    assert isinstance(value_true, Expression)
+    assert isinstance(value_false, Expression)
+    assert value_true.dtype == value_false.dtype
+    if isinstance(condition.dtype, VectorType):
+        assert isinstance(value_true.dtype, VectorType)
+        assert value_true.dtype._length == condition.dtype._length
 
-        assert int1_t.test_dtype_or_vector(condition)
-        assert isinstance(value_true, Expression)
-        assert isinstance(value_false, Expression)
-        assert value_true.dtype == value_false.dtype
-        if isinstance(condition.dtype, VectorType):
-            assert isinstance(value_true.dtype, VectorType)
-            assert value_true.dtype._length == condition.dtype._length
-
-        return super().__new__(cls, value_true.dtype,
-            (condition, value_true, value_false))
-
-    def _eval(self, bb, condition, value_true, value_false):
-
-        result = bb._reserve_variable(self.dtype)
-        bb._append_statement('  {} = select {}, {}, {}'.format(
-            result._llvm_id, condition._llvm_ty_val, value_true._llvm_ty_val,
-            value_false._llvm_ty_val))
-        return bb, result
+    return FormatExpression(
+        value_true.dtype,
+        'select {0:dtype} {0}, {1:dtype} {1}, {2:dtype} {2}',
+        (condition, value_true, value_false))
 
 
 class GetElementPointer(Expression):
@@ -768,52 +786,37 @@ class GetElementPointer(Expression):
         return bb, result
 
 
-class ExtractElement(Expression):
+def ExtractElement(vector, index):
 
-    def __new__(cls, vector, index):
+    assert VectorType.test_dtype_class(vector)
+    # TODO: The documentation is unclear about the signedness of `index`.
+    # Assuming signed here.  Find out what llvm uses.
+    if isinstance(index, numbers.Integral):
+        index = SignedIntegerType.smallest_pow2(index)
+    else:
+        assert SignedIntegerType.test_dtype_class(index)
 
-        assert VectorType.test_dtype_class(vector)
-        # TODO: The documentation is unclear about the signedness of `index`.
-        # Assuming signed here.  Find out what llvm uses.
-        if isinstance(index, numbers.Integral):
-            index = SignedIntegerType.smallest_pow2(index)
-        else:
-            assert SignedIntegerType.test_dtype_class(index)
-
-        return super().__new__(cls, vector.dtype._element_dtype,
-            (vector, index))
-
-    def _eval(self, bb, vector, index):
-
-        result = bb._reserve_variable(self.dtype)
-        bb._append_statement('  {} = extractelement {}, {}'.format(
-            result._llvm_id, vector._llvm_ty_val, index._llvm_ty_val))
-        return bb, result
+    return FormatExpression(
+        vector.dtype._element_dtype,
+        'extractelement {0:dtype} {0}, {1:dtype} {1}',
+        (vector, index))
 
 
-class InsertElement(Expression):
+def InsertElement(vector, element, index):
 
-    def __new__(cls, vector, element, index):
+    assert VectorType.test_dtype_class(vector)
+    element = vector.dtype._element_dtype(element)
+    # TODO: The documentation is unclear about the signedness of `index`.
+    # Assuming signed here.  Find out what llvm uses.
+    if isinstance(index, numbers.Integral):
+        index = SignedIntegerType.smallest_pow2(index)
+    else:
+        assert SignedIntegerType.test_dtype_class(index)
 
-        assert VectorType.test_dtype_class(vector)
-        element = vector.dtype._element_dtype(element)
-        # TODO: The documentation is unclear about the signedness of `index`.
-        # Assuming signed here.  Find out what llvm uses.
-        if isinstance(index, numbers.Integral):
-            index = SignedIntegerType.smallest_pow2(index)
-        else:
-            assert SignedIntegerType.test_dtype_class(index)
-
-        return super().__new__(cls, vector.dtype,
-            (vector, element, index))
-
-    def _eval(self, bb, vector, element, index):
-
-        result = bb._reserve_variable(self.dtype)
-        bb._append_statement('  {} = insertelement {}, {}, {}'.format(
-            result._llvm_id, vector._llvm_ty_val, element._llvm_ty_val,
-            index._llvm_ty_val))
-        return bb, result
+    return FormatExpression(
+        vector.dtype,
+        'insertelement {0:dtype} {0}, {1:dtype} {1}, {2:dtype} {2}',
+        (vector, element, index))
 
 
 class ExtractValue(Expression):
@@ -884,10 +887,8 @@ class DereferencePointer(Expression):
 
     def _eval(self, bb, address):
 
-        result = bb._reserve_variable(self.dtype)
-        bb._append_statement('  {} = load {}'.format(
-            result._llvm_id, address._llvm_ty_val))
-        return bb, result
+        return bb, bb._append_rhs_statement(self.dtype, 'load {} {}'.format(
+            address.dtype._llvm_id, address._llvm_id))
 
 
 class FunctionCallBase:
@@ -998,6 +999,12 @@ class BasicBlock:
         if self._finalised:
             raise ValueError('Cannot append statement to finalised `BasicBlock`.')
         self._statements.append(statement)
+
+    def _append_rhs_statement(self, dtype, rhs):
+
+        var = self._reserve_variable(dtype)
+        self._append_statement('  {} = {}'.format(var._llvm_id, rhs))
+        return var
 
     def _generate_ir(self, output):
 
@@ -1396,6 +1403,20 @@ float32_t = FloatType('float')
 float64_t = FloatType('double')
 
 
+def _convert_python_numbers(*args):
+
+    dtypes = set(arg.dtype for arg in args if isinstance(arg, Expression))
+    if len(dtypes) != 1:
+        return args
+    dtype = next(iter(dtypes))
+    try:
+        return tuple(
+            dtype(arg) if isinstance(arg, numbers.Number) else arg
+            for arg in args)
+    except TypeError:
+        pass
+
+
 def _gen_bin_op(dtype_class, py_dtype, llvm_op, return_dtype=None):
     def custom(l, r):
         _return_dtype = return_dtype
@@ -1417,11 +1438,9 @@ def _gen_bin_op(dtype_class, py_dtype, llvm_op, return_dtype=None):
                 _return_dtype = VectorType(_return_dtype)
         else:
             return NotImplemented
-        return RHSExpression(
+        return FormatExpression(
             l.dtype if _return_dtype is None else _return_dtype,
-            lambda _l, _r: '{} {}, {}'.format(
-                llvm_op, _l._llvm_ty_val, _r._llvm_id),
-            (l, r))
+            llvm_op+' {0:dtype} {0}, {1}', (l, r))
     return custom
 
 for _dtype_class, _flag in \
@@ -1550,10 +1569,9 @@ def _operator(value):
         else:
             d = value.dtype
         f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-        return RHSExpression(
+        return FormatExpression(
             value.dtype,
-            lambda _value: 'call {} @llvm.fabs.{}({})'.format(
-                _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
+            'call {dtype} @llvm.fabs.'+f_type+'({0:dtype} {0})',
             (value,))
 
 @floor.register
@@ -1576,10 +1594,9 @@ def _operator(value):
         else:
             d = value.dtype
         f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-        return RHSExpression(
+        return FormatExpression(
             value.dtype,
-            lambda _value: 'call {} @llvm.floor.{}({})'.format(
-                _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
+            'call {dtype} @llvm.floor.'+f_type+'({0:dtype} {0})',
             (value,))
 
 @ceil.register
@@ -1602,10 +1619,9 @@ def _operator(value):
         else:
             d = value.dtype
         f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-        return RHSExpression(
+        return FormatExpression(
             value.dtype,
-            lambda _value: 'call {} @llvm.ceil.{}({})'.format(
-                _value.dtype._llvm_id, f_type, _value._llvm_ty_val),
+            'call {dtype} @llvm.ceil.'+f_type+'({0:dtype} {0})',
             (value,))
 
 @copysign.register
@@ -1632,10 +1648,9 @@ def _operator(l, r):
     else:
         d = l.dtype
     f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-    return RHSExpression(
+    return FormatExpression(
         l.dtype,
-        lambda _l, _r: 'call {} @llvm.copysign.{}({}, {})'.format(
-            _l.dtype._llvm_id, f_type, _l._llvm_ty_val, _r._llvm_ty_val),
+        'call {dtype} @llvm.copysign.'+f_type+'({0:dtype} {0}, {1:dtype} {1})',
         (l, r))
 
 @floordiv.register
@@ -1684,11 +1699,8 @@ def _typecast(new_dtype, value):
         op = 'fptosi'
     else:
         return NotImplemented
-    return RHSExpression(
-        new_dtype,
-        lambda _value:
-            '{} {} to {}'.format(op, _value._llvm_ty_val, new_dtype._llvm_id),
-        (value,))
+    return FormatExpression(
+        new_dtype, op+' {0:dtype} {0} to {dtype}', (value,))
 
 @UnsignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
@@ -1708,11 +1720,8 @@ def _typecast(new_dtype, value):
         op = 'fptoui'
     else:
         return NotImplemented
-    return RHSExpression(
-        new_dtype,
-        lambda _value:
-            '{} {} to {}'.format(op, _value._llvm_ty_val, new_dtype._llvm_id),
-        (value,))
+    return FormatExpression(
+        new_dtype, op+' {0:dtype} {0} to {dtype}', (value,))
 
 @FloatType.typecast.register
 def _typecast(new_dtype, value):
@@ -1736,11 +1745,8 @@ def _typecast(new_dtype, value):
         op = 'uitofp'
     else:
         return NotImplemented
-    return RHSExpression(
-        new_dtype,
-        lambda _value:
-            '{} {} to {}'.format(op, _value._llvm_ty_val, new_dtype._llvm_id),
-        (value,))
+    return FormatExpression(
+        new_dtype, op+' {0:dtype} {0} to {dtype}', (value,))
 
 del _dtype_class, _flag, _op, _llvm_op, _gen_bin_op, _neg_custom, _typecast
 del _operator
