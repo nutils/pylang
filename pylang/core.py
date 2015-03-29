@@ -83,7 +83,7 @@ class TypeBase:
 
     def __call__(self, expression):
 
-        if isinstance(expression, Expression) and expression.dtype == self:
+        if self.test_dtype(expression):
             return expression
         else:
             raise NotImplementedError
@@ -100,6 +100,15 @@ class TypeBase:
     def _expression_getitem(self, expression, index):
 
         raise TypeError('expression with dtype {!r} does not support indexing.'.format(self))
+
+    def test_dtype(self, value):
+
+        return isinstance(value, Expression) and value.dtype == self
+
+    @classmethod
+    def test_dtype_class(cls, value):
+
+        return isinstance(value, Expression) and isinstance(value.dtype, cls)
 
 
 class VoidType(TypeBase):
@@ -202,6 +211,24 @@ class FirstClassType(TypeBase):
             (value,))
 
 
+class PrimitiveType(FirstClassType):
+
+    def test_dtype_or_vector(self, value):
+
+        return isinstance(value, Expression) and ( \
+            value.dtype == self \
+            or isinstance(value.dtype, VectorType) \
+            and value.dtype._element_dtype == self)
+
+    @classmethod
+    def test_dtype_class_or_vector(cls, value):
+
+        return isinstance(value, Expression) and ( \
+            isinstance(value.dtype, cls)
+            or isinstance(value.dtype, VectorType) \
+            and isinstance(value.dtype._element_dtype, cls))
+
+
 class AggregateType(FirstClassType):
 
     pass
@@ -263,6 +290,7 @@ class VectorType(FirstClassType):
 
     def __new__(cls, dtype, length):
 
+        assert isinstance(dtype, PrimitiveType)
         self = super().__new__(cls, '<{} x {}>'.format(length, dtype._llvm_id))
         self._element_dtype = dtype
         self._length = length
@@ -444,7 +472,7 @@ class StructureType(AggregateType):
                 assert n == len(self.dtypes)
 
 
-class IntegerType(FirstClassType):
+class IntegerType(PrimitiveType):
 
     def __new__(cls, bits):
 
@@ -458,7 +486,7 @@ class IntegerType(FirstClassType):
 
     def __call__(self, value):
 
-        if isinstance(value, Expression) and value.dtype == self:
+        if self.test_dtype(value):
             return value
         elif isinstance(value, numbers.Number):
             if isinstance(value, numbers.Integral):
@@ -501,7 +529,7 @@ class UnsignedIntegerType(IntegerType):
                 return cls(bits)(value)
 
 
-class FloatType(FirstClassType):
+class FloatType(PrimitiveType):
 
     typecast = MultipleDispatchFunction(2)
 
@@ -516,7 +544,7 @@ class FloatType(FirstClassType):
 
     def __call__(self, value):
 
-        if isinstance(value, Expression) and value.dtype == self:
+        if self.test_dtype(value):
             return value
         elif isinstance(value, numbers.Number):
             if isinstance(value, numbers.Real):
@@ -678,16 +706,13 @@ class Select(Expression):
 
     def __new__(cls, condition, value_true, value_false):
 
-        assert isinstance(condition, Expression)
+        assert int1_t.test_dtype_or_vector(condition)
         assert isinstance(value_true, Expression)
         assert isinstance(value_false, Expression)
         assert value_true.dtype == value_false.dtype
         if isinstance(condition.dtype, VectorType):
-            assert condition.dtype._element_dtype == int1_t
             assert isinstance(value_true.dtype, VectorType)
             assert value_true.dtype._length == condition.dtype._length
-        else:
-            assert condition.dtype == int1_t
 
         return super().__new__(cls, value_true.dtype,
             (condition, value_true, value_false))
@@ -715,8 +740,7 @@ class GetElementPointer(Expression):
             if isinstance(index, numbers.Integral):
                 index = SignedIntegerType.smallest_pow2(index)
             else:
-                assert isinstance(index, Expression) \
-                    and isinstance(index.dtype, SignedIntegerType)
+                assert SignedIntegerType.test_dtype_class(index)
 
         if isinstance(pointer, GetElementPointer):
             assert not \
@@ -748,15 +772,13 @@ class ExtractElement(Expression):
 
     def __new__(cls, vector, index):
 
-        assert isinstance(vector, Expression) \
-            and isinstance(vector.dtype, VectorType)
+        assert VectorType.test_dtype_class(vector)
         # TODO: The documentation is unclear about the signedness of `index`.
         # Assuming signed here.  Find out what llvm uses.
         if isinstance(index, numbers.Integral):
             index = SignedIntegerType.smallest_pow2(index)
         else:
-            assert isinstance(index, Expression) \
-                and isinstance(index.dtype, SignedIntegerType)
+            assert SignedIntegerType.test_dtype_class(index)
 
         return super().__new__(cls, vector.dtype._element_dtype,
             (vector, index))
@@ -773,16 +795,14 @@ class InsertElement(Expression):
 
     def __new__(cls, vector, element, index):
 
-        assert isinstance(vector, Expression) \
-            and isinstance(vector.dtype, VectorType)
+        assert VectorType.test_dtype_class(vector)
         element = vector.dtype._element_dtype(element)
         # TODO: The documentation is unclear about the signedness of `index`.
         # Assuming signed here.  Find out what llvm uses.
         if isinstance(index, numbers.Integral):
             index = SignedIntegerType.smallest_pow2(index)
         else:
-            assert isinstance(index, Expression) \
-                and isinstance(index.dtype, SignedIntegerType)
+            assert SignedIntegerType.test_dtype_class(index)
 
         return super().__new__(cls, vector.dtype,
             (vector, element, index))
