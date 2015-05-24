@@ -43,6 +43,7 @@ def compile_and_run(module):
 def test1():
 
     module = pylang.core.Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
     body, end = entry.append_extended_blocks(2)
@@ -59,7 +60,7 @@ def test1():
     factorial_previous.set_value(1, entry)
     factorial_previous.set_value(factorial, body)
 
-    end.call('printf', b'5! = %d\n', factorial)
+    end.call(libc.printf, b'5! = %d\n', factorial)
     end.ret(0)
 
     compile_and_run(module)
@@ -68,6 +69,7 @@ def test1():
 def test2():
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
     body, exit = entry.append_extended_blocks(2)
@@ -78,7 +80,7 @@ def test2():
     array = DynamicArray.allocate(body, int32_t, n)
     body.assign(array[i], i)
 
-    body.call('printf', b'%d\n', array[i])
+    body.call(libc.printf, b'%d\n', array[i])
 
     i.set_value(0, entry)
     i.set_value(body.eval(i+1), body)
@@ -93,12 +95,13 @@ def test2():
 def test3():
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
 
     loop_entry, loop_exit, i, j, k = utils.for_loop_helper(entry,
         int32_t, 2, lambda i: i+2, lambda i, j: i+j+2)
-    loop_entry.call('printf', b'i = %d, j = %d, k = %d\n', i, j, k)
+    loop_entry.call(libc.printf, b'i = %d, j = %d, k = %d\n', i, j, k)
     loop_entry.branch(loop_exit)
 
     entry.ret(0)
@@ -170,6 +173,7 @@ class DynamicArray:
 def test4():
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
 
@@ -184,7 +188,7 @@ def test4():
 
     loop_entry, loop_exit, *I = utils.for_loop_helper(entry, int32_t, *a.shape)
     loop_entry.assign(c[I], a[I]+b[I])
-    loop_entry.call('printf', b'c[%d,%d] = %d\n', I[0], I[1], c[I])
+    loop_entry.call(libc.printf, b'c[%d,%d] = %d\n', I[0], I[1], c[I])
     loop_entry.branch(loop_exit)
 
     a.free(entry)
@@ -268,16 +272,17 @@ def test_fib_cplusplus(n):
 def test_typecast():
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
 
     i = int32_t(1)
     f = float64_t(i)
-    entry.call('printf', b'%f\n', f)
+    entry.call(libc.printf, b'%f\n', f)
 
     f = float64_t(1.)
     i = int32_t(f)
-    entry.call('printf', b'%d\n', i)
+    entry.call(libc.printf, b'%d\n', i)
 
     entry.ret(0)
 
@@ -287,12 +292,13 @@ def test_typecast():
 def test_float_loop():
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
 
     loop_entry, loop_exit, i = utils.for_loop_helper(entry,
         float64_t, [0, 10, 0.25])
-    loop_entry.call('printf', b'%f\n', i)
+    loop_entry.call(libc.printf, b'%f\n', i)
     loop_entry.branch(loop_exit)
 
     entry.ret(0)
@@ -331,13 +337,14 @@ def test_struct():
         [['foo', int32_t], ['bar', float64_t]]))
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
 
     val = LLVMIdentifier('undef', S)
     val = val.insert({'foo': 1, 'bar': 2})
 
-    entry.call('printf', b'%d %f\n', val['foo'], val['bar'])
+    entry.call(libc.printf, b'%d %f\n', val['foo'], val['bar'])
     entry.ret(0)
 
     compile_and_run(module)
@@ -350,6 +357,7 @@ def test_allocate_stack():
     T = StructureType((int64_t, S))
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
 
@@ -363,9 +371,9 @@ def test_allocate_stack():
 
     entry.assign(var[2], [0, {'foo': 1, 'bar': 2}])
 
-    entry.call('printf', b'%d %d %f\n', var.content[0], var.content[1]['foo'], var.content[1]['bar'])
-    entry.call('printf', b'%d %d %f\n', var[1][0], var[1][1]['foo'], var[1][1]['bar'])
-    entry.call('printf', b'%d %d %f\n', var[2][0], var[2][1]['foo'], var[2][1]['bar'])
+    entry.call(libc.printf, b'%d %d %f\n', var.content[0], var.content[1]['foo'], var.content[1]['bar'])
+    entry.call(libc.printf, b'%d %d %f\n', var[1][0], var[1][1]['foo'], var[1][1]['bar'])
+    entry.call(libc.printf, b'%d %d %f\n', var[2][0], var[2][1]['foo'], var[2][1]['bar'])
     entry.ret(0)
 
     compile_and_run(module)
@@ -374,6 +382,7 @@ def test_allocate_stack():
 def test_array():
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     main, entry = module.define_function('main', int32_t)
 
@@ -381,7 +390,7 @@ def test_array():
     var = var.content
 
     entry.assign(var, [1, 2, 3])
-    entry.call('printf', b'%d %d %d\n', var[0], var[1], var[2])
+    entry.call(libc.printf, b'%d %d %d\n', var[0], var[1], var[2])
     entry.ret(0)
 
     compile_and_run(module)
@@ -390,13 +399,14 @@ def test_array():
 def test_function_pointer():
 
     module = Module()
+    libc = pylang.utils.link_libc(module)
 
     foo, foo_entry, foo_a = module.define_function('foo', int32_t, int32_t)
     foo_entry.ret(foo_a+1)
 
     bar, bar_entry, bar_func = module.define_function('bar', void_t,
         foo.dtype)
-    bar_entry.call('printf', b'%d\n', bar_entry.call(bar_func, 1))
+    bar_entry.call(libc.printf, b'%d\n', bar_entry.call(bar_func, 1))
     bar_entry.ret()
 
     main, main_entry = module.define_function('main', int32_t)

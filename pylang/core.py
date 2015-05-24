@@ -1215,21 +1215,6 @@ class Module:
         self._string_constants = collections.OrderedDict()
         self._link_ir = []
 
-        # TODO: depends on the target platform
-        self.size_t = uint64_t
-        self.ssize_t = int64_t
-        self.intptr_t = int64_t
-        self.uintptr_t = uint64_t
-
-        self.declare_function('malloc', [int8_t.pointer, 'noalias'],
-            self.size_t, function_attributes=['nounwind'])
-        self.declare_function('alligned_alloc', [int8_t.pointer, 'noalias'],
-            self.size_t, self.size_t, function_attributes=['nounwind'])
-        self.declare_function('free', void_t, [int8_t.pointer, 'nocapture'],
-            function_attributes=['nounwind'])
-        self.declare_function('printf', int32_t,
-            [int8_t.pointer, 'nocapture', 'readonly'], ...)
-
         self.declare_function('llvm.fabs.f32', float32_t, float32_t)
         self.declare_function('llvm.fabs.f64', float64_t, float64_t)
         self.declare_function('llvm.copysign.f32', float32_t, float32_t,

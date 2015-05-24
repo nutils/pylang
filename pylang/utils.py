@@ -75,4 +75,50 @@ def _for_loop_helper1(extended_block, dtype, range_args, outer_loop_vars):
 
     return eb_loop_body, eb_loop_end, loop_var
 
+
+class _attributes:
+
+    __slots__ = ['_attributes']
+
+    def __new__(cls, **attributes):
+
+        self = super().__new__(cls)
+        self._attributes = attributes
+
+    def __getattr__(self, attr):
+
+        try:
+            return self._attributes[attr]
+        except KeyError:
+            raise AttributeError
+
+
+def link_libc(module):
+
+    class libc:
+
+        # TODO: depends on the target platform
+        size_t = core.uint64_t
+        ssize_t = core.int64_t
+        intptr_t = core.int64_t
+        uintptr_t = core.uint64_t
+
+        malloc = module.declare_function(
+            'malloc',
+            [core.int8_t.pointer, 'noalias'], size_t,
+            function_attributes=['nounwind'])
+        alligned_alloc = module.declare_function(
+            'alligned_alloc',
+            [core.int8_t.pointer, 'noalias'], size_t, size_t,
+            function_attributes=['nounwind'])
+        free = module.declare_function(
+            'free',
+            core.void_t, [core.int8_t.pointer, 'nocapture'],
+            function_attributes=['nounwind'])
+        printf = module.declare_function(
+            'printf',
+            core.int32_t, [core.int8_t.pointer, 'nocapture', 'readonly'], ...)
+
+    return libc
+
 # vim: ts=4:sts=4:sw=4:et
