@@ -1368,10 +1368,6 @@ gt = MultipleDispatchFunction(2)
 ge = MultipleDispatchFunction(2)
 eq = MultipleDispatchFunction(2)
 ne = MultipleDispatchFunction(2)
-abs_ = MultipleDispatchFunction(1)
-floor = MultipleDispatchFunction(1)
-ceil = MultipleDispatchFunction(1)
-copysign = MultipleDispatchFunction(2)
 
 
 
@@ -1540,110 +1536,6 @@ def _operator(l, r):
         return NotImplemented
     return copysign(abs(l)%abs(r), l)
 
-@abs_.register
-def _operator(value):
-    if not isinstance(value, Expression):
-        return NotImplemented
-    elif isinstance(value.dtype, UnsignedIntegerType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, UnsignedIntegerType):
-        return value
-    elif isinstance(value.dtype, SignedIntegerType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, SignedIntegerType):
-        return Select(ge(value, 0), value, -value)
-    elif isinstance(value.dtype, FloatType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, FloatType):
-        if isinstance(value.dtype, VectorType):
-            d = value.dtype._element_dtype
-        else:
-            d = value.dtype
-        f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-        return FormatExpression(
-            value.dtype,
-            'call {dtype} @llvm.fabs.'+f_type+'({0:dtype} {0})',
-            (value,))
-
-@floor.register
-def _operator(value):
-    if not isinstance(value, Expression):
-        return NotImplemented
-    elif isinstance(value.dtype, UnsignedIntegerType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, UnsignedIntegerType):
-        return value
-    elif isinstance(value.dtype, SignedIntegerType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, SignedIntegerType):
-        return value
-    elif isinstance(value.dtype, FloatType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, FloatType):
-        if isinstance(value.dtype, VectorType):
-            d = value.dtype._element_dtype
-        else:
-            d = value.dtype
-        f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-        return FormatExpression(
-            value.dtype,
-            'call {dtype} @llvm.floor.'+f_type+'({0:dtype} {0})',
-            (value,))
-
-@ceil.register
-def _operator(value):
-    if not isinstance(value, Expression):
-        return NotImplemented
-    elif isinstance(value.dtype, UnsignedIntegerType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, UnsignedIntegerType):
-        return value
-    elif isinstance(value.dtype, SignedIntegerType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, SignedIntegerType):
-        return value
-    elif isinstance(value.dtype, FloatType) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype, FloatType):
-        if isinstance(value.dtype, VectorType):
-            d = value.dtype._element_dtype
-        else:
-            d = value.dtype
-        f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-        return FormatExpression(
-            value.dtype,
-            'call {dtype} @llvm.ceil.'+f_type+'({0:dtype} {0})',
-            (value,))
-
-@copysign.register
-def _operator(l, r):
-    if isinstance(l, Expression) and isinstance(l.dtype, FloatType):
-        if isinstance(r, Expression) and l.dtype == r.dtype:
-            pass
-        elif isinstance(r, py_dtype):
-            r = l.dtype(r)
-        else:
-            return NotImplemented
-    elif isinstance(r, Expression) and isinstance(r.dtype, FloatType) \
-            and isinstance(l, py_dtype):
-        l = r.dtype(l)
-    elif isinstance(l, Expression) and isinstance(r, Expression) \
-            and isinstance(l.dtype, VectorType) \
-            and isinstance(l.dtype._element_dtype, FloatType) \
-            and r.dtype == l.dtype:
-        pass
-    else:
-        return NotImplemented
-    if isinstance(l.dtype, VectorType):
-        d = l.dtype._element_dtype
-    else:
-        d = l.dtype
-    f_type = {float32_t: 'f32', float64_t: 'f64'}[d]
-    return FormatExpression(
-        l.dtype,
-        'call {dtype} @llvm.copysign.'+f_type+'({0:dtype} {0}, {1:dtype} {1})',
-        (l, r))
-
 @floordiv.register
 def _operator(l, r):
     value = truediv._operator_call(l, r)
@@ -1741,5 +1633,145 @@ def _typecast(new_dtype, value):
 
 del _dtype_class, _flag, _op, _llvm_op, _gen_bin_op, _neg_custom, _typecast
 del _operator
+
+
+class _ReadOnlyIntrinsicFunctionCall(ReadOnlyFunctionCall):
+
+    def _eval(self, bb, *children):
+
+        if children[0]._llvm_id[1:] not in bb._module._functions:
+            dtype = children[0].dtype.reference_dtype
+            assert not dtype._variable_arguments
+            bb._module.declare_function(
+                children[0]._llvm_id[1:],
+                dtype._return_value,
+                *dtype._parameters,
+                function_attributes=dtype._function_attributes)
+        return super()._eval(bb, *children)
+
+
+def _gen_float_intrinsic(name, n_args):
+
+    func = MultipleDispatchFunction(n_args)
+
+    @func.register
+    def _llvm_intrinsic(*args):
+
+        # `len(args) == n_args` is asserted by `MultipleDispatchFunction`
+
+        # list all floating point types
+        float_dtypes = set(
+            arg.dtype
+            for arg in args
+            if FloatType.test_dtype_class_or_vector(arg))
+        # extract the *single* float dtype
+        if len(float_dtypes) != 1:
+            return NotImplemented
+        float_dtype = next(iter(float_dtypes))
+        # convert all args to float
+        try:
+            args = tuple(map(float_dtype, args))
+        except NotImplementedError:
+            return NotImplemented
+        # determine float name
+        if isinstance(float_dtype, VectorType):
+            scalar_float_dtype = float_dtype._element_dtype
+            vector_name = 'v{}'.format(float_dtype._length)
+        else:
+            scalar_float_dtype = float_dtype
+            vector_name = ''
+        _float_names = {
+            float32_t: 'f32',
+            float64_t: 'f64',
+        }
+        float_name = _float_names[scalar_float_dtype]
+        # call intrinsic
+        func_dtype = FunctionType(
+            float_dtype, (float_dtype,)*n_args, False, ())
+        scalar_func_dtype = FunctionType(
+            scalar_float_dtype, (scalar_float_dtype,)*n_args, False, ())
+        func = LLVMIdentifier(
+            '@llvm.{}.{}{}'.format(name, vector_name, float_name),
+            func_dtype.pointer)
+        return _ReadOnlyIntrinsicFunctionCall(func, args)
+
+    return func
+
+
+sqrt = _gen_float_intrinsic('sqrt', 1)
+sin = _gen_float_intrinsic('sin', 1)
+cos = _gen_float_intrinsic('cos', 1)
+exp = _gen_float_intrinsic('exp', 1)
+exp2 = _gen_float_intrinsic('exp2', 1)
+log = _gen_float_intrinsic('log', 1)
+log10 = _gen_float_intrinsic('log10', 1)
+log2 = _gen_float_intrinsic('log2', 1)
+abs_ = _gen_float_intrinsic('fabs', 1)
+floor = _gen_float_intrinsic('floor', 1)
+ceil = _gen_float_intrinsic('ceil', 1)
+trunc = _gen_float_intrinsic('trunc', 1)
+rint = _gen_float_intrinsic('rint', 1)
+nearbyint = _gen_float_intrinsic('nearbyint', 1)
+round_ = _gen_float_intrinsic('round', 1)
+
+pow_ = _gen_float_intrinsic('pow', 2)
+minnum = _gen_float_intrinsic('minnum', 2)
+maxnum = _gen_float_intrinsic('maxnum', 2)
+copysign = _gen_float_intrinsic('copysign', 2)
+
+fma = _gen_float_intrinsic('fma', 3)
+fmuladd = _gen_float_intrinsic('fmuladd', 3)
+
+#   llvm.powi.*
+
+
+@abs_.register
+def _int_impl(value):
+
+    if UnsignedIntegerType.test_dtype_class_or_vector(value):
+        return value
+    elif SignedIntegerType.test_dtype_class_or_vector(value):
+        return Select(ge(value, 0), value, -value)
+    else:
+        return NotImplemented
+
+
+@copysign.register
+def _int_impl(mag, sgn):
+
+    try:
+        mag, sgn = _convert_python_numbers(mag, sgn)
+    except TypeError:
+        return NotImplemented
+    if not isinstance(mag, Expression) or not isinstance(sgn, Expression):
+        return NotImplemented
+    if mag.dtype != sgn.dtype:
+        return NotImplemented
+    if UnsignedIntegerType.test_dtype_class_or_vector(mag):
+        return mag
+    elif SignedIntegerType.test_dtype_class_or_vector(mag):
+        return Select(ge(mag*sgn, 0), mag, -mag)
+    else:
+        return NotImplemented
+
+
+def _noop_int(value):
+
+    if IntegerType.test_dtype_class_or_vector(value):
+        return value
+    else:
+        return NotImplemented
+
+
+floor.register(_noop_int)
+ceil.register(_noop_int)
+trunc.register(_noop_int)
+rint.register(_noop_int)
+nearbyint.register(_noop_int)
+round_.register(_noop_int)
+
+
+del _int_impl, _noop_int
+
 
 # vim: ts=4:sts=4:sw=4:et
