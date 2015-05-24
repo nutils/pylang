@@ -231,6 +231,10 @@ class PrimitiveType(FirstClassType):
             or isinstance(value.dtype, VectorType) \
             and isinstance(value.dtype._element_dtype, cls))
 
+    def vector(self, length):
+
+        return VectorType(self, length)
+
 
 class AggregateType(FirstClassType):
 
