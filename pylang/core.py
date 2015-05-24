@@ -282,7 +282,7 @@ class PointerType(FirstClassType):
             assert not kwargs
             if self.reference_dtype._function_attributes\
                     &frozenset(('readnone', 'readonly')):
-                return ConstFunctionCall(expression, args)
+                return ReadOnlyFunctionCall(expression, args)
             else:
                 return FunctionCall(expression, args)
         else:
@@ -891,33 +891,7 @@ class DereferencePointer(Expression):
             address.dtype._llvm_id, address._llvm_id))
 
 
-class FunctionCallBase:
-
-    def _generate_call_statement(self, bb, *children):
-
-        function_pointer, *args = children
-        if self._function_dtype._variable_arguments:
-            function_type = self._function_dtype._llvm_id+'*'
-            assert len(args) >= len(self._function_dtype._parameters)
-        else:
-            function_type = self._function_dtype._return_value.dtype._llvm_id
-            assert len(args) == len(self._function_dtype._parameters)
-
-        return_dtype = self._function_dtype._return_value.dtype
-        if return_dtype == void_t:
-            result_var = None
-            prefix = '  '
-        else:
-            result_var = bb._reserve_variable(return_dtype)
-            prefix = '  {} = '.format(result_var._llvm_id)
-
-        bb._append_statement('{}call {} {}({})'.format(
-            prefix, function_type, function_pointer._llvm_id,
-            ', '.join(arg._llvm_ty_val for arg in args)))
-        return result_var
-
-
-class FunctionCall(FunctionCallBase):
+class FunctionCall:
 
     def __new__(cls, function_pointer, args):
 
@@ -928,12 +902,11 @@ class FunctionCall(FunctionCallBase):
         args = tuple(dtype(arg) for arg, dtype in zip(args, dtypes))
 
         self = super().__new__(cls)
-        self._function_dtype = func_dtype
         self._children = (function_pointer,)+args
         return self
 
 
-class ConstFunctionCall(Expression, FunctionCallBase):
+class ReadOnlyFunctionCall(Expression):
 
     def __new__(cls, function_pointer, args):
 
@@ -944,13 +917,15 @@ class ConstFunctionCall(Expression, FunctionCallBase):
             itertools.cycle([lambda e: e]))
         children.extend(dtype(arg) for arg, dtype in zip(args, dtypes))
 
+        assert func_dtype._return_value.dtype != void_t
+
         self = super().__new__(cls, func_dtype._return_value.dtype, children)
         self._function_dtype = func_dtype
         return self
 
     def _eval(self, bb, *children):
 
-        return bb, self._generate_call_statement(bb, *children)
+        return bb, bb.call(*children)
 
 
 class BasicBlock:
@@ -1059,17 +1034,38 @@ class BasicBlock:
                 value._llvm_id))
         self._finalised = True
 
-    def call(*args, **kwargs):
+    def call(*args):
 
-        self, function, *args = args
+        self, function_pointer, *args = args
 
-        if isinstance(function, str):
-            function = self._module._functions[function]
+        if isinstance(function_pointer, str):
+            function_pointer = self._module._functions[function_pointer]
 
-        func_call = function(*args, **kwargs)
-        assert isinstance(func_call, FunctionCallBase)
-        assert all(isinstance(child, LLVMIdentifier) for child in func_call._children)
-        return func_call._generate_call_statement(self, *func_call._children)
+        assert isinstance(function_pointer, LLVMIdentifier)
+        assert all(isinstance(arg, LLVMIdentifier) for arg in args)
+
+        function_dtype = function_pointer.dtype.reference_dtype
+        if function_dtype._variable_arguments:
+            function_type = function_dtype._llvm_id+'*'
+            assert len(args) >= len(function_dtype._parameters)
+        else:
+            function_type = function_dtype._return_value.dtype._llvm_id
+            assert len(args) == len(function_dtype._parameters)
+
+        # TODO: check argument dtypes
+
+        return_dtype = function_dtype._return_value.dtype
+        if return_dtype == void_t:
+            result_var = None
+            prefix = '  '
+        else:
+            result_var = self._reserve_variable(return_dtype)
+            prefix = '  {} = '.format(result_var._llvm_id)
+
+        self._append_statement('{}call {} {}({})'.format(
+            prefix, function_type, function_pointer._llvm_id,
+            ', '.join(arg._llvm_ty_val for arg in args)))
+        return result_var
 
     def allocate_stack(self, dtype, n_elements=1):
 
@@ -1124,8 +1120,13 @@ class ExtendedBlock:
 
     def eval(self, expression):
 
-        cache = {}
-        if isinstance(expression, (tuple, list)):
+        if isinstance(expression, FunctionCall):
+            # nested FunctionCalls are not allowed
+            return self._tail.call(*self.eval(expression._children))
+        elif isinstance(expression, Expression):
+            return self.eval((expression,))[0]
+        elif isinstance(expression, (tuple, list)):
+            cache = {}
             values = []
             for expression in expression:
                 if not isinstance(expression, Expression):
@@ -1135,10 +1136,8 @@ class ExtendedBlock:
                 values.append(value)
             return values
         else:
-            if not isinstance(expression, Expression):
-                raise ValueError('not an expression: {!r}'.format(expression))
-            self._tail, value = expression._eval_tree(self._tail, cache)
-            return value
+            raise ValueError('`eval` takes an `Expression` or a list of '\
+                '`Expression`s, not {!r}.'.format(expression))
 
     def assign(self, variable, expression):
 
@@ -1189,14 +1188,9 @@ class ExtendedBlock:
     def call(*args, **kwargs):
 
         self, function, *args = args
-
         if isinstance(function, str):
             function = self._module._functions[function]
-
-        func_call = function(*args, **kwargs)
-        assert isinstance(func_call, FunctionCallBase)
-        children = self.eval(func_call._children)
-        return func_call._generate_call_statement(self._tail, *children)
+        return self.eval(function(*args, **kwargs))
 
     def allocate_stack(self, dtype, n_elements=1):
 
