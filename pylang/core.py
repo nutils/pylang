@@ -307,6 +307,14 @@ class VectorType(FirstClassType):
 
         return self._element_dtype, self._length
 
+    def __call__(self, elements):
+
+        # TODO: typecasting
+        if self.test_dtype(elements):
+            return elements
+        else:
+            return self.create(elements)
+
     def create(self, elements):
 
         # TODO: use notation mentioned in
