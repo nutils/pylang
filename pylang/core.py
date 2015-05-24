@@ -1221,17 +1221,6 @@ class Module:
         self._string_constants = collections.OrderedDict()
         self._link_ir = []
 
-        self.declare_function('llvm.fabs.f32', float32_t, float32_t)
-        self.declare_function('llvm.fabs.f64', float64_t, float64_t)
-        self.declare_function('llvm.copysign.f32', float32_t, float32_t,
-            float32_t)
-        self.declare_function('llvm.copysign.f64', float64_t, float64_t,
-            float64_t)
-        self.declare_function('llvm.floor.f32', float32_t, float32_t)
-        self.declare_function('llvm.floor.f64', float64_t, float64_t)
-        self.declare_function('llvm.ceil.f32', float32_t, float32_t)
-        self.declare_function('llvm.ceil.f64', float64_t, float64_t)
-
     @staticmethod
     def _generate_function_type_header(name, return_value, parameters,
             function_attributes, with_arg_expressions):
@@ -1390,11 +1379,14 @@ float32_t = FloatType('float')
 float64_t = FloatType('double')
 
 
-def _convert_python_numbers(*args):
+def _convert_python_numbers(*args, assert_single_dtype=False):
 
     dtypes = set(arg.dtype for arg in args if isinstance(arg, Expression))
     if len(dtypes) != 1:
-        return args
+        if assert_single_dtype:
+            raise TypeError
+        else:
+            return args
     dtype = next(iter(dtypes))
     try:
         return tuple(
@@ -1404,165 +1396,181 @@ def _convert_python_numbers(*args):
         pass
 
 
-def _gen_bin_op(dtype_class, py_dtype, llvm_op, return_dtype=None):
-    def custom(l, r):
-        _return_dtype = return_dtype
-        if isinstance(l, Expression) and isinstance(l.dtype, dtype_class):
-            if isinstance(r, Expression) and l.dtype == r.dtype:
-                pass
-            elif isinstance(r, py_dtype):
-                r = l.dtype(r)
-            else:
-                return NotImplemented
-        elif isinstance(r, Expression) and isinstance(r.dtype, dtype_class) \
-                and isinstance(l, py_dtype):
-            l = r.dtype(l)
-        elif isinstance(l, Expression) and isinstance(r, Expression) \
-                and isinstance(l.dtype, VectorType) \
-                and isinstance(l.dtype._element_dtype, dtype_class) \
-                and r.dtype == l.dtype:
-            if _return_dtype is not None:
-                _return_dtype = VectorType(_return_dtype)
-        else:
-            return NotImplemented
-        return FormatExpression(
-            l.dtype if _return_dtype is None else _return_dtype,
-            llvm_op+' {0:dtype} {0}, {1}', (l, r))
-    return custom
-
-for _dtype_class, _flag in \
-        ((SignedIntegerType, 's'), (UnsignedIntegerType, 'u')):
-    for _op, _llvm_op in ((add, 'add'), (sub, 'sub'), (mul, 'mul')):
-        _op.register(_gen_bin_op(_dtype_class, numbers.Integral, _llvm_op))
-    for _op, _llvm_op in ((lt, _flag+'lt'), (le, _flag+'le'), (gt, _flag+'gt'),
-            (ge, _flag+'ge'), (eq, 'eq'), (ne, 'ne')):
-        _op.register(_gen_bin_op(
-            _dtype_class, numbers.Integral, 'icmp '+_llvm_op, int1_t))
-
-rtzdiv.register(_gen_bin_op(SignedIntegerType, numbers.Integral, 'sdiv'))
-rtzdiv.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'udiv'))
-floordiv.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'udiv'))
-
-rtzmod.register(_gen_bin_op(SignedIntegerType, numbers.Integral, 'srem'))
-rtzmod.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'urem'))
-mod.register(_gen_bin_op(UnsignedIntegerType, numbers.Integral, 'urem'))
-
-for _op, _llvm_op in ((add, 'fadd'), (sub, 'fsub'), (mul, 'fmul'),
-        (truediv, 'fdiv'), (mod, 'frem')):
-    _op.register(_gen_bin_op(FloatType, numbers.Real, _llvm_op))
-# TODO: support the unordered comparisons?
-#       see http://llvm.org/docs/LangRef.html#fcmp-instruction
-for _op, _llvm_op in ((lt, 'olt'), (le, 'ole'), (gt, 'ogt'), (ge, 'oge'),
-        (eq, 'oeq'), (ne, 'one')):
-    _op.register(_gen_bin_op(
-        FloatType, numbers.Real, 'fcmp '+_llvm_op, int1_t))
-
-@floordiv.register
-def _operator(l, r):
-    if isinstance(l, Expression) and isinstance(l.dtype, SignedIntegerType):
-        if isinstance(r, Expression) and l.dtype == r.dtype:
-            pass
-        elif isinstance(r, py_dtype):
-            r = l.dtype(r)
-        else:
-            return NotImplemented
-    elif isinstance(r, Expression) and isinstance(r.dtype, SignedIntegerType) \
-            and isinstance(l, py_dtype):
-        l = r.dtype(l)
-    elif isinstance(l, Expression) and isinstance(r, Expression) \
-            and isinstance(l.dtype, VectorType) \
-            and isinstance(l.dtype._element_dtype, SignedIntegerType) \
-            and r.dtype == l.dtype:
-        if return_dtype is not None:
-            return_dtype = VectorType(return_dtype)
-    else:
-        return NotImplemented
-    return Select(ge(l*r, 0), rtzdiv(l, r),
-        Select(ge(l, 0), rtzdiv(l-1, r)-1, rtzdiv(l+1, r)-1))
-
-@mod.register
-def _operator(l, r):
-    if isinstance(l, Expression) and isinstance(l.dtype, SignedIntegerType):
-        if isinstance(r, Expression) and l.dtype == r.dtype:
-            pass
-        elif isinstance(r, py_dtype):
-            r = l.dtype(r)
-        else:
-            return NotImplemented
-    elif isinstance(r, Expression) and isinstance(r.dtype, SignedIntegerType) \
-            and isinstance(l, py_dtype):
-        l = r.dtype(l)
-    elif isinstance(l, Expression) and isinstance(r, Expression) \
-            and isinstance(l.dtype, VectorType) \
-            and isinstance(l.dtype._element_dtype, SignedIntegerType) \
-            and r.dtype == l.dtype:
-        if return_dtype is not None:
-            return_dtype = VectorType(return_dtype)
-    else:
-        return NotImplemented
-    return Select(ge(r, 0),
-        Select(ge(l, 0), rtzmod(l, r), rtzmod(r-rtzmod(-l, r), r)),
-        Select(ge(l, 0), -rtzmod(-r-rtzmod(l, -r), -r), -rtzmod(-l, -r)))
-
 @neg.register
-def _neg_custom(value):
-    if isinstance(value, Expression) and \
-            (isinstance(value.dtype, (SignedIntegerType, FloatType)) \
-            or isinstance(value.dtype, VectorType) \
-            and isinstance(value.dtype._element_dtype,
-                (SignedIntegerType, FloatType))):
-        return 0-value
+def _implementation(r):
+
+    if SignedIntegerType.test_dtype_class_or_vector(r) \
+            or FloatType.test_dtype_class_or_vector(r):
+        return 0-r
     else:
         return NotImplemented
 
-@rtzmod.register
-def _operator(l, r):
-    if isinstance(l, Expression) and isinstance(l.dtype, FloatType):
-        if isinstance(r, Expression) and l.dtype == r.dtype:
-            pass
-        elif isinstance(r, py_dtype):
-            r = l.dtype(r)
-        else:
-            return NotImplemented
-    elif isinstance(r, Expression) and isinstance(r.dtype, FloatType) \
-            and isinstance(l, py_dtype):
-        l = r.dtype(l)
-    elif isinstance(l, Expression) and isinstance(r, Expression) \
-            and isinstance(l.dtype, VectorType) \
-            and isinstance(l.dtype._element_dtype, FloatType) \
-            and r.dtype == l.dtype:
-        pass
+
+@add.register
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
+        return NotImplemented
+    if IntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'add {0:dtype} {0}, {1}', (l, r))
+    elif FloatType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'fadd {0:dtype} {0}, {1}', (l, r))
     else:
         return NotImplemented
-    return copysign(abs(l)%abs(r), l)
+
+
+@sub.register
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
+        return NotImplemented
+    if IntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'sub {0:dtype} {0}, {1}', (l, r))
+    elif FloatType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'fsub {0:dtype} {0}, {1}', (l, r))
+    else:
+        return NotImplemented
+
+
+@mul.register
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
+        return NotImplemented
+    if IntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'mul {0:dtype} {0}, {1}', (l, r))
+    elif FloatType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'fmul {0:dtype} {0}, {1}', (l, r))
+    else:
+        return NotImplemented
+
+
+@truediv.register
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
+        return NotImplemented
+    if FloatType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'fdiv {0:dtype} {0}, {1}', (l, r))
+    else:
+        return NotImplemented
+
 
 @floordiv.register
-def _operator(l, r):
-    value = truediv._operator_call(l, r)
-    if value is NotImplemented:
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
         return NotImplemented
-    elif isinstance(value.dtype, FloatType):
-        el_dtype = value.dtype
-    elif isinstance(value.dtype, VectorType) and \
-            isinstance(value.dtype._element_dtype, FloatType):
-        el_dtype = value._element_dtype.dtype
+    if SignedIntegerType.test_dtype_class_or_vector(l):
+        return Select(ge(l*r, 0), rtzdiv(l, r),
+            Select(ge(l, 0), rtzdiv(l-1, r)-1, rtzdiv(l+1, r)-1))
+    elif UnsignedIntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'udiv {0:dtype} {0}, {1}', (l, r))
+    elif FloatType.test_dtype_class_or_vector(l):
+        return floor(
+            FormatExpression(l.dtype, 'fdiv {0:dtype} {0}, {1}', (l, r)))
     else:
         return NotImplemented
-    return floor(value)
+
 
 @rtzdiv.register
-def _operator(l, r):
-    value = truediv._operator_call(l, r)
-    if value is NotImplemented:
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
         return NotImplemented
-    elif isinstance(value.dtype, FloatType):
-        el_dtype = value.dtype
-    elif isinstance(value.dtype, VectorType) and \
-            isinstance(value.dtype._element_dtype, FloatType):
-        el_dtype = value._element_dtype.dtype
+    if SignedIntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'sdiv {0:dtype} {0}, {1}', (l, r))
+    elif UnsignedIntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'udiv {0:dtype} {0}, {1}', (l, r))
+    elif FloatType.test_dtype_class_or_vector(l):
+        return trunc(
+            FormatExpression(l.dtype, 'fdiv {0:dtype} {0}, {1}', (l, r)))
     else:
         return NotImplemented
-    return Select(ge(value, 0), floor(value), ceil(value))
+
+
+@mod.register
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
+        return NotImplemented
+    if SignedIntegerType.test_dtype_class_or_vector(l):
+        return Select(ge(r, 0),
+            Select(ge(l, 0), rtzmod(l, r), rtzmod(r-rtzmod(-l, r), r)),
+            Select(ge(l, 0), -rtzmod(-r-rtzmod(l, -r), -r), -rtzmod(-l, -r)))
+    elif UnsignedIntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'urem {0:dtype} {0}, {1}', (l, r))
+    elif FloatType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'frem {0:dtype} {0}, {1}', (l, r))
+    else:
+        return NotImplemented
+
+
+@rtzmod.register
+def _implementation(l, r):
+
+    try:
+        l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+    except TypeError:
+        return NotImplemented
+    if SignedIntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'srem {0:dtype} {0}, {1}', (l, r))
+    elif UnsignedIntegerType.test_dtype_class_or_vector(l):
+        return FormatExpression(l.dtype, 'urem {0:dtype} {0}, {1}', (l, r))
+    elif FloatType.test_dtype_class_or_vector(l):
+        return copysign(abs(l)%abs(r), l)
+    else:
+        return NotImplemented
+
+
+def _gen_cmp_op(s_llvm_op, u_llvm_op, f_llvm_op):
+    def _implementation(l, r):
+
+        try:
+            l, r = _convert_python_numbers(l, r, assert_single_dtype=True)
+        except TypeError:
+            return NotImplemented
+        if isinstance(l.dtype, VectorType):
+            return_dtype = VectorType(int1_t, l.dtype._length)
+        else:
+            return_dtype = int1_t
+        if SignedIntegerType.test_dtype_class_or_vector(l):
+            method = 'icmp'
+            llvm_op = s_llvm_op
+        elif UnsignedIntegerType.test_dtype_class_or_vector(l):
+            method = 'icmp'
+            llvm_op = u_llvm_op
+        elif FloatType.test_dtype_class_or_vector(l):
+            method = 'fcmp'
+            llvm_op = f_llvm_op
+        else:
+            return NotImplemented
+        return FormatExpression(return_dtype,
+            method+' '+llvm_op+' {0:dtype} {0}, {1}', (l, r))
+    return _implementation
+
+
+eq.register(_gen_cmp_op('eq', 'eq', 'oeq'))
+ne.register(_gen_cmp_op('ne', 'ne', 'one'))
+lt.register(_gen_cmp_op('slt', 'ult', 'olt'))
+gt.register(_gen_cmp_op('sgt', 'ugt', 'ogt'))
+le.register(_gen_cmp_op('sle', 'ule', 'ole'))
+ge.register(_gen_cmp_op('sge', 'uge', 'oge'))
+
 
 @SignedIntegerType.typecast.register
 def _typecast(new_dtype, value):
@@ -1631,8 +1639,7 @@ def _typecast(new_dtype, value):
     return FormatExpression(
         new_dtype, op+' {0:dtype} {0} to {dtype}', (value,))
 
-del _dtype_class, _flag, _op, _llvm_op, _gen_bin_op, _neg_custom, _typecast
-del _operator
+del _implementation, _typecast, _gen_cmp_op
 
 
 class _ReadOnlyIntrinsicFunctionCall(ReadOnlyFunctionCall):
