@@ -1134,7 +1134,8 @@ class ExtendedBlock:
 
         if isinstance(expression, FunctionCall):
             # nested FunctionCalls are not allowed
-            return self._tail.call(*self.eval(expression._children))
+            args = self.eval(expression._children)
+            return self._tail.call(*args)
         elif isinstance(expression, Expression):
             return self.eval((expression,))[0]
         elif isinstance(expression, (tuple, list)):
