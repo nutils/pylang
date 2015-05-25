@@ -1103,6 +1103,19 @@ class BasicBlock:
         self._append_statement('  store {}, {}'.format(
             value._llvm_ty_val, address._llvm_ty_val))
 
+    def eval(self, *expressions):
+
+        bb = self
+        cache = {}
+        values = []
+        for expression in expressions:
+            if not isinstance(expression, Expression):
+                raise ValueError(
+                    'not an expression: {!r}'.format(expression))
+            bb, value = expression._eval_tree(bb, cache)
+            values.append(value)
+        return [bb]+values
+
 
 class _NestedScopeEntry:
 
