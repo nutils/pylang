@@ -998,10 +998,9 @@ class BasicBlock:
         if not self._finalised:
             raise ValueError('Incomplete `BasicBlock`.  Add a branch or return statement.')
         print('{}:'.format(self._label._llvm_id[1:]), file=output)
-        get_label = lambda bb: bb._tail._label if isinstance(bb, ExtendedBlock) else bb._label
         for phi_node in self._phi_nodes:
             values = ', '.join(
-                '[{}, {}]'.format(value, get_label(bb)._llvm_id)
+                '[{}, {}]'.format(value, bb._label._llvm_id)
                 for value, bb in phi_node._values)
             print('  {} = phi {} {}'.format(phi_node._llvm_id, phi_node.dtype._llvm_id, values), file=output)
         for statement in self._statements:
@@ -1105,12 +1104,32 @@ class BasicBlock:
             value._llvm_ty_val, address._llvm_ty_val))
 
 
+class _NestedScopeEntry:
+
+    def __init__(self, basic_block):
+
+        self._tail = basic_block
+        self._label = self._tail._label
+
+
+class _NestedScopeExit:
+
+    def __init__(self, basic_block):
+
+        self._head = basic_block
+
+
 class ExtendedBlock:
 
     def __init__(self, entry_basic_block):
 
         self._head = entry_basic_block
         self._tail = entry_basic_block
+
+    @property
+    def _label(self):
+
+        return self._tail._label
 
     @property
     def _module(self):
@@ -1129,6 +1148,20 @@ class ExtendedBlock:
     def append_extended_blocks(self, n):
 
         return tuple(map(ExtendedBlock, self._tail.append_basic_blocks(n)))
+
+    def create_nested_scope(self, n):
+
+        # TODO: Prevent branching outside this 'scope'?  And raise an error
+        # when using a label outside this scope in a phi node?  We could add a
+        # `_scope` attribute to `ExtendedBlock`s and copy this when using
+        # `append_extended_block(s)`.  This function would create a new scope.
+
+        bbs = self._tail.append_basic_blocks(n+1)
+        self._tail.branch1(bbs[0])
+        xb_entry = _NestedScopeEntry(self._tail)
+        self._tail = bbs[-1]
+        xb_exit = _NestedScopeExit(self._tail)
+        return (xb_entry,)+tuple(map(ExtendedBlock, bbs[:-1]))+(xb_exit,)
 
     def eval(self, expression):
 
